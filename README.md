@@ -36,6 +36,7 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 - [Bun](https://bun.sh) >= 1.3.3
 - [Docker](https://docker.com) (for Redis)
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for Python apps)
+- [Envoy](https://github.com/denizlg24/envoy) for .env versioning
 
 ## Quick Start
 
@@ -43,12 +44,14 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 # Install JavaScript dependencies
 bun install
 
+# Pull environment variables for root project
+envy pull
+
 # Install Python dependencies for both Python apps
 cd apps/mitt-model && uv sync && cd ../..
 cd apps/mitt-worker && uv sync && cd ../..
 
-# Pull environment variables (requires envoy)
-cd apps/mitt-model && envy pull && cd ../..
+# Pull python environment variables
 cd apps/mitt-worker && envy pull && cd ../..
 
 # Start everything (Docker + all apps including Python)
@@ -68,16 +71,6 @@ That's it! `bun dev` starts Docker, all TypeScript apps, the Python API server, 
 | `bun run docker:up`   | Start Docker services (Redis) only                            |
 | `bun run docker:down` | Stop Docker services                                          |
 | `bun run docker:logs` | View Docker logs                                              |
-
-## Environment Variables
-
-Create a `.env` file in the root or in specific apps:
-
-```env
-# API Configuration
-REDIS_URL=redis://localhost:6379
-MITT_URL=http://localhost:8000
-```
 
 ---
 
@@ -311,6 +304,8 @@ The worker runs as a separate turborepo package and starts automatically with `b
 Environment variables are managed with **envoy**. Pull the latest `.env` files:
 
 ```bash
+# Pull env file for root project
+envy pull
 # Pull env files for each Python app
 cd apps/mitt-model && envy pull && cd ../..
 cd apps/mitt-worker && envy pull && cd ../..
