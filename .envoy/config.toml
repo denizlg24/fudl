@@ -1,0 +1,11 @@
+
+version = 1
+project_id = "0d7aaa7e-7983-4ee6-9c27-106de36600c2"
+name = "fudl"
+
+default_remote = "origin"
+
+[remotes]
+origin = "https://envoy-cli.vercel.app/api"
+
+

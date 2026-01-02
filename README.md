@@ -1,135 +1,341 @@
-# Turborepo starter
+# FUDL
 
-This Turborepo starter is maintained by the Turborepo core team.
+AI-powered flag football analytics platform - a Hudl clone with route detection and game analysis.
 
-## Using this example
-
-Run the following command:
-
-```sh
-npx create-turbo@latest
-```
-
-## What's inside?
-
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
+## Architecture
 
 ```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
+│   Next.js Web   │ ──────▶ │   Elysia API     │ ──────▶ │   mitt-model    │
+│   (port 3000)   │         │   (port 3002)    │         │   (port 8000)   │
+└─────────────────┘         └────────┬─────────┘         └─────────────────┘
+                                     │
+                                     │ Long-running jobs
+                                     ▼
+                            ┌──────────────────┐         ┌─────────────────┐
+                            │  Redis + BullMQ  │ ◀────── │   mitt-worker   │
+                            │   Job Queue      │         │   (polls jobs)  │
+                            └──────────────────┘         └─────────────────┘
 ```
 
-You can build a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
+## Apps and Packages
 
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
+| Name                       | Description                      | Port |
+| -------------------------- | -------------------------------- | ---- |
+| `web`                      | Next.js web application          | 3000 |
+| `docs`                     | Next.js documentation            | 3001 |
+| `@repo/api`                | Elysia API server                | 3002 |
+| `mitt-model`               | Python FastAPI server            | 8000 |
+| `mitt-worker`              | Python BullMQ job worker         | -    |
+| `@repo/ui`                 | Shared React component library   | -    |
+| `@repo/eslint-config`      | Shared ESLint configuration      | -    |
+| `@repo/typescript-config`  | Shared TypeScript configuration  | -    |
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
+## Prerequisites
 
-### Develop
+- [Bun](https://bun.sh) >= 1.3.3
+- [Docker](https://docker.com) (for Redis)
+- Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for Python apps)
 
-To develop all apps and packages, run the following command:
+## Quick Start
 
-```
-cd my-turborepo
+```bash
+# Install JavaScript dependencies
+bun install
 
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
+# Install Python dependencies for both Python apps
+cd apps/mitt-model && uv sync && cd ../..
+cd apps/mitt-worker && uv sync && cd ../..
 
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
-```
+# Pull environment variables (requires envoy)
+cd apps/mitt-model && envy pull && cd ../..
+cd apps/mitt-worker && envy pull && cd ../..
 
-You can develop a specific package by using a [filter](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters):
-
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+# Start everything (Docker + all apps including Python)
+bun dev
 ```
 
-### Remote Caching
+That's it! `bun dev` starts Docker, all TypeScript apps, the Python API server, and the job worker.
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
+## Commands
 
-Turborepo can use a technique known as [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
+| Command               | Description                                                   |
+| --------------------- | ------------------------------------------------------------- |
+| `bun dev`             | Start Docker + all apps (web, docs, api, mitt-model, mitt-worker) |
+| `bun run build`       | Build all apps                                                |
+| `bun run lint`        | Lint all apps                                                 |
+| `bun run check-types` | Type check all apps                                           |
+| `bun run docker:up`   | Start Docker services (Redis) only                            |
+| `bun run docker:down` | Stop Docker services                                          |
+| `bun run docker:logs` | View Docker logs                                              |
 
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
+## Environment Variables
 
-```
-cd my-turborepo
+Create a `.env` file in the root or in specific apps:
 
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-```
-# With [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.com/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+```env
+# API Configuration
+REDIS_URL=redis://localhost:6379
+MITT_URL=http://localhost:8000
 ```
 
-## Useful Links
+---
 
-Learn more about the power of Turborepo:
+## Python Developer Setup
 
-- [Tasks](https://turborepo.com/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.com/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.com/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.com/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.com/docs/reference/configuration)
-- [CLI Usage](https://turborepo.com/docs/reference/command-line-reference)
+The Python codebase is split into two packages:
+
+| Package       | Description                              | Location            |
+| ------------- | ---------------------------------------- | ------------------- |
+| `mitt-model`  | FastAPI server for AI/ML inference       | `apps/mitt-model`   |
+| `mitt-worker` | BullMQ worker for video analysis jobs    | `apps/mitt-worker`  |
+
+Both packages use [uv](https://github.com/astral-sh/uv) for dependency management.
+
+## Installing uv
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package manager written in Rust.
+
+### Windows
+
+**With PowerShell (recommended):**
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**With pip:**
+
+```cmd
+pip install uv
+```
+
+**With pipx:**
+
+```cmd
+pipx install uv
+```
+
+**With winget:**
+
+```cmd
+winget install --id=astral-sh.uv -e
+```
+
+### macOS
+
+**With Homebrew (recommended):**
+
+```bash
+brew install uv
+```
+
+**With curl:**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**With pip:**
+
+```bash
+pip install uv
+```
+
+**With pipx:**
+
+```bash
+pipx install uv
+```
+
+### Linux
+
+**With curl (recommended):**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**With pip:**
+
+```bash
+pip install uv
+```
+
+**With pipx:**
+
+```bash
+pipx install uv
+```
+
+**Arch Linux:**
+
+```bash
+pacman -S uv
+```
+
+**Alpine Linux:**
+
+```bash
+apk add uv
+```
+
+### Verify Installation
+
+```bash
+uv --version
+```
+
+## Setting Up Python Packages
+
+```bash
+# Setup mitt-model (FastAPI server)
+cd apps/mitt-model
+uv sync
+uv sync --all-extras  # Include dev dependencies
+
+# Setup mitt-worker (job worker)
+cd ../mitt-worker
+uv sync
+uv sync --all-extras  # Include dev dependencies
+```
+
+## Running Python Apps
+
+Both Python apps run automatically with `bun dev` from the project root. Turbo manages them as separate tasks.
+
+**To run manually:**
+
+```bash
+# Terminal 1 - FastAPI server
+cd apps/mitt-model
+bun dev
+# Or: uv run uvicorn mitt_model.main:app --reload --port 8000
+
+# Terminal 2 - Job worker
+cd apps/mitt-worker
+bun dev
+# Or: uv run python -u -m mitt_worker
+```
+
+## Development Commands
+
+```bash
+# For either mitt-model or mitt-worker:
+cd apps/mitt-model  # or apps/mitt-worker
+
+# Run tests
+uv run pytest
+
+# Run linter
+uv run ruff check .
+
+# Run formatter
+uv run ruff format .
+
+# Run type checker
+uv run mypy src
+
+# Add a new dependency
+uv add <package-name>
+
+# Add a dev dependency
+uv add --dev <package-name>
+```
+
+## Project Structure
+
+```text
+apps/
+├── mitt-model/                 # FastAPI server
+│   ├── pyproject.toml
+│   ├── package.json
+│   ├── .python-version
+│   └── src/mitt_model/
+│       ├── __init__.py
+│       ├── __main__.py
+│       ├── main.py             # FastAPI entry point
+│       ├── api/                # API route handlers
+│       └── models/             # ML models
+│
+└── mitt-worker/                # BullMQ job worker
+    ├── pyproject.toml
+    ├── package.json
+    ├── .python-version
+    └── src/mitt_worker/
+        ├── __init__.py
+        ├── __main__.py
+        └── worker.py           # Worker entry point
+```
+
+## API Endpoints (mitt-model)
+
+| Method | Endpoint   | Description                            |
+| ------ | ---------- | -------------------------------------- |
+| GET    | `/health`  | Health check                           |
+| POST   | `/predict` | Quick inference (route classification) |
+
+## Adding ML Models
+
+Place your model code in `src/mitt_model/models/`. Example structure:
+
+```python
+# src/mitt_model/models/route_detector.py
+import numpy as np
+
+class RouteDetector:
+    def __init__(self):
+        # Load your model weights here
+        pass
+
+    def predict(self, coordinates: list[tuple[float, float]]) -> str:
+        # Your prediction logic
+        return "slant"
+```
+
+Then import and use in `main.py` or create new API routes.
+
+## Job Worker (mitt-worker)
+
+The worker processes long-running jobs from the BullMQ queue:
+
+1. Video is uploaded and job is queued via Elysia API
+2. Worker polls Redis for new jobs
+3. Worker processes video and stores results
+4. Results are retrieved via job status endpoint
+
+The worker runs as a separate turborepo package and starts automatically with `bun dev`.
+
+## Environment Variables
+
+Environment variables are managed with **envoy**. Pull the latest `.env` files:
+
+```bash
+# Pull env files for each Python app
+cd apps/mitt-model && envy pull && cd ../..
+cd apps/mitt-worker && envy pull && cd ../..
+```
+
+## Troubleshooting
+
+**uv command not found after installation:**
+
+- Restart your terminal
+- On Windows, ensure the install path is in your PATH
+- Try running with full path: `~/.cargo/bin/uv` (Unix) or check installation output for path
+
+**Python version mismatch:**
+
+```bash
+# Install Python 3.11 via uv
+uv python install 3.11
+
+# Pin the version
+uv python pin 3.11
+```
+
+**Redis connection errors:**
+
+- Ensure Redis is running: `docker ps` or `bun run docker:up`
+- Ensure env vars are pulled: `cd apps/mitt-worker && envy pull`
+- View logs: `bun run docker:logs`

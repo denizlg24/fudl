@@ -1,0 +1,11 @@
+
+version = 1
+project_id = "2c16db9f-7cbb-4215-9f50-c78ee7a81a3d"
+name = "fudl/mitt-worker"
+
+default_remote = "origin"
+
+[remotes]
+origin = "https://envoy-cli.vercel.app/api"
+
+

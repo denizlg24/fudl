@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Envoy
+
+!.envoy/
+
+.envoy/cache/
+.envoy/*.blob
+
+

@@ -1,0 +1,12 @@
+import { Elysia } from "elysia";
+import { healthRoutes } from "./routes/health";
+import { analysisRoutes } from "./routes/analysis";
+
+const app = new Elysia()
+  .use(healthRoutes)
+  .use(analysisRoutes)
+  .listen(3002);
+
+console.log(`API running at http://localhost:${app.server?.port}`);
+
+export type App = typeof app;
