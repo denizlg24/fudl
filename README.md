@@ -36,7 +36,7 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 - [Bun](https://bun.sh) >= 1.3.3
 - [Docker](https://docker.com) (for Redis)
 - Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for Python apps)
-- [Envoy](https://github.com/denizlg24/envoy) for .env versioning
+- [Envoy >= v0.1.6-hotfix](https://github.com/denizlg24/envoy) for .env versioning
 
 ## Quick Start
 
@@ -44,15 +44,15 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 # Install JavaScript dependencies
 bun install
 
+# If not logged in on envoy
+envy login
+
 # Pull environment variables for root project
 envy pull
 
 # Install Python dependencies for both Python apps
 cd apps/mitt-model && uv sync && cd ../..
 cd apps/mitt-worker && uv sync && cd ../..
-
-# Pull python environment variables
-cd apps/mitt-worker && envy pull && cd ../..
 
 # Start everything (Docker + all apps including Python)
 bun dev
