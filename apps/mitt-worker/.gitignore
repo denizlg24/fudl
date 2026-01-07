@@ -10,4 +10,6 @@ __pycache__/
 .envoy/cache/
 .envoy/*.blob
 
+src/mitt_worker/data/*
+
 
