@@ -11,6 +11,8 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@elysiajs/cors": "^1.2.0",
+    "@repo/types": "workspace:*",
     "elysia": "^1.2.0",
     "bullmq": "^5.0.0",
     "ioredis": "^5.4.0"
