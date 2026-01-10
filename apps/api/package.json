@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "elysia": "^1.4.21",
+    "@elysiajs/cors": "^1.2.0",
+    "@repo/types": "workspace:*",
     "bullmq": "^5.0.0",
     "ioredis": "^5.4.0"
   },

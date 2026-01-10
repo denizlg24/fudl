@@ -5,16 +5,16 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 ## Architecture
 
 ```
-┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
-│   Next.js Web   │ ──────▶ │   Elysia API     │ ──────▶ │   mitt-model    │
-│   (port 3000)   │         │   (port 3002)    │         │   (port 8000)   │
-└─────────────────┘         └────────┬─────────┘         └─────────────────┘
+┌─────────────────┐         ┌──────────────────┐
+│   Next.js Web   │ ──────▶ │   Elysia API     │
+│   (port 3000)   │         │   (port 3002)    │
+└─────────────────┘         └────────┬─────────┘
                                      │
-                                     │ Long-running jobs
+                                     │ Queues jobs
                                      ▼
                             ┌──────────────────┐         ┌─────────────────┐
                             │  Redis + BullMQ  │ ◀────── │   mitt-worker   │
-                            │   Job Queue      │         │   (polls jobs)  │
+                            │   Job Queue      │         │   (Python)      │
                             └──────────────────┘         └─────────────────┘
 ```
 
@@ -25,7 +25,6 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 | `web`                      | Next.js web application          | 3000 |
 | `docs`                     | Next.js documentation            | 3001 |
 | `@repo/api`                | Elysia API server                | 3002 |
-| `mitt-model`               | Python FastAPI server            | 8000 |
 | `mitt-worker`              | Python BullMQ job worker         | -    |
 | `@repo/ui`                 | Shared React component library   | -    |
 | `@repo/eslint-config`      | Shared ESLint configuration      | -    |
@@ -35,7 +34,7 @@ AI-powered flag football analytics platform - a Hudl clone with route detection 
 
 - [Bun](https://bun.sh) >= 1.3.3
 - [Docker](https://docker.com) (for Redis)
-- Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for Python apps)
+- Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for mitt-worker)
 - [Envoy >= v0.1.6-hotfix](https://github.com/denizlg24/envoy) for .env versioning
 
 ## Quick Start
@@ -50,40 +49,34 @@ envy login
 # Pull environment variables for root project
 envy pull
 
-# Install Python dependencies for both Python apps
-cd apps/mitt-model && uv sync && cd ../..
+# Install Python dependencies
 cd apps/mitt-worker && uv sync && cd ../..
 
 # Start everything (Docker + all apps including Python)
 bun dev
 ```
 
-That's it! `bun dev` starts Docker, all TypeScript apps, the Python API server, and the job worker.
+That's it! `bun dev` starts Docker, all TypeScript apps, and the Python job worker.
 
 ## Commands
 
-| Command               | Description                                                   |
-| --------------------- | ------------------------------------------------------------- |
-| `bun dev`             | Start Docker + all apps (web, docs, api, mitt-model, mitt-worker) |
-| `bun run build`       | Build all apps                                                |
-| `bun run lint`        | Lint all apps                                                 |
-| `bun run check-types` | Type check all apps                                           |
-| `bun run docker:up`   | Start Docker services (Redis) only                            |
-| `bun run docker:down` | Stop Docker services                                          |
-| `bun run docker:logs` | View Docker logs                                              |
+| Command               | Description                                            |
+| --------------------- | ------------------------------------------------------ |
+| `bun dev`             | Start Docker + all apps (web, docs, api, mitt-worker)  |
+| `bun run build`       | Build all apps                                         |
+| `bun run lint`        | Lint all apps                                          |
+| `bun run check-types` | Type check all apps                                    |
+| `bun run docker:up`   | Start Docker services (Redis) only                     |
+| `bun run docker:down` | Stop Docker services                                   |
+| `bun run docker:logs` | View Docker logs                                       |
 
 ---
 
-## Python Developer Setup
+## Python Developer Setup (mitt-worker)
 
-The Python codebase is split into two packages:
+The Python codebase lives in `apps/mitt-worker`. It's a BullMQ worker that processes video analysis jobs from Redis.
 
-| Package       | Description                              | Location            |
-| ------------- | ---------------------------------------- | ------------------- |
-| `mitt-model`  | FastAPI server for AI/ML inference       | `apps/mitt-model`   |
-| `mitt-worker` | BullMQ worker for video analysis jobs    | `apps/mitt-worker`  |
-
-Both packages use [uv](https://github.com/astral-sh/uv) for dependency management.
+[uv](https://github.com/astral-sh/uv) is used for dependency management.
 
 ## Installing uv
 
@@ -179,33 +172,21 @@ apk add uv
 uv --version
 ```
 
-## Setting Up Python Packages
+## Setting Up mitt-worker
 
 ```bash
-# Setup mitt-model (FastAPI server)
-cd apps/mitt-model
-uv sync
-uv sync --all-extras  # Include dev dependencies
-
-# Setup mitt-worker (job worker)
-cd ../mitt-worker
+cd apps/mitt-worker
 uv sync
 uv sync --all-extras  # Include dev dependencies
 ```
 
-## Running Python Apps
+## Running mitt-worker
 
-Both Python apps run automatically with `bun dev` from the project root. Turbo manages them as separate tasks.
+The worker runs automatically with `bun dev` from the project root. Turbo manages it as a separate task.
 
 **To run manually:**
 
 ```bash
-# Terminal 1 - FastAPI server
-cd apps/mitt-model
-bun dev
-# Or: uv run uvicorn mitt_model.main:app --reload --port 8000
-
-# Terminal 2 - Job worker
 cd apps/mitt-worker
 bun dev
 # Or: uv run python -u -m mitt_worker
@@ -214,8 +195,7 @@ bun dev
 ## Development Commands
 
 ```bash
-# For either mitt-model or mitt-worker:
-cd apps/mitt-model  # or apps/mitt-worker
+cd apps/mitt-worker
 
 # Run tests
 uv run pytest
@@ -239,41 +219,22 @@ uv add --dev <package-name>
 ## Project Structure
 
 ```text
-apps/
-├── mitt-model/                 # FastAPI server
-│   ├── pyproject.toml
-│   ├── package.json
-│   ├── .python-version
-│   └── src/mitt_model/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── main.py             # FastAPI entry point
-│       ├── api/                # API route handlers
-│       └── models/             # ML models
-│
-└── mitt-worker/                # BullMQ job worker
-    ├── pyproject.toml
-    ├── package.json
-    ├── .python-version
-    └── src/mitt_worker/
-        ├── __init__.py
-        ├── __main__.py
-        └── worker.py           # Worker entry point
+apps/mitt-worker/
+├── pyproject.toml
+├── package.json
+├── .python-version
+└── src/mitt_worker/
+    ├── __init__.py
+    ├── __main__.py
+    └── worker.py           # Worker entry point
 ```
-
-## API Endpoints (mitt-model)
-
-| Method | Endpoint   | Description                            |
-| ------ | ---------- | -------------------------------------- |
-| GET    | `/health`  | Health check                           |
-| POST   | `/predict` | Quick inference (route classification) |
 
 ## Adding ML Models
 
-Place your model code in `src/mitt_model/models/`. Example structure:
+Place your model code in `src/mitt_worker/models/`. Example structure:
 
 ```python
-# src/mitt_model/models/route_detector.py
+# src/mitt_worker/models/route_detector.py
 import numpy as np
 
 class RouteDetector:
@@ -286,18 +247,18 @@ class RouteDetector:
         return "slant"
 ```
 
-Then import and use in `main.py` or create new API routes.
+Then import and use in `worker.py` to process jobs.
 
-## Job Worker (mitt-worker)
+## Job Worker
 
-The worker processes long-running jobs from the BullMQ queue:
+The worker processes jobs from the BullMQ queue:
 
 1. Video is uploaded and job is queued via Elysia API
 2. Worker polls Redis for new jobs
 3. Worker processes video and stores results
 4. Results are retrieved via job status endpoint
 
-The worker runs as a separate turborepo package and starts automatically with `bun dev`.
+The worker runs as a turborepo package and starts automatically with `bun dev`.
 
 ## Environment Variables
 
@@ -306,8 +267,8 @@ Environment variables are managed with **envoy**. Pull the latest `.env` files:
 ```bash
 # Pull env file for root project
 envy pull
-# Pull env files for each Python app
-cd apps/mitt-model && envy pull && cd ../..
+
+# Pull env file for mitt-worker
 cd apps/mitt-worker && envy pull && cd ../..
 ```
 
