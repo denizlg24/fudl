@@ -1,17 +1,18 @@
 """
 BullMQ-compatible worker for processing video analysis jobs.
-Uses Redis to poll for jobs from the 'video-analysis' queue.
+Uses the official bullmq Python package for proper protocol compatibility.
 """
-import json
+import asyncio
 import os
 import time
-import redis
 from dotenv import load_dotenv
 from typing import TypedDict
+from bullmq import Worker
 
 load_dotenv()
 
-REDIS_URL = os.getenv('REDIS_URL')
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 
 
 class PlayerAnalysis(TypedDict):
@@ -30,15 +31,9 @@ class JobData(TypedDict):
     videoUrl: str
 
 
-class BullMQJob(TypedDict):
-    id: str
-    data: JobData
-
-
 def process_video(video_url: str) -> VideoAnalysisResult:
     """Process a video and return analysis results."""
-    # Placeholder - replace with actual ML processing
-    print(f"Processing video: {video_url}")
+    print(f"[INFO] Processing video: {video_url}")
     time.sleep(2)  # Simulate processing
     return VideoAnalysisResult(
         routes_detected=[],
@@ -47,47 +42,55 @@ def process_video(video_url: str) -> VideoAnalysisResult:
     )
 
 
-def run_worker() -> None:
-    """Simple worker that polls Redis for BullMQ jobs."""
-    print(f"Connecting to Redis at: {REDIS_URL}")
-    
-    try:
-        r: redis.Redis[bytes] = redis.from_url(REDIS_URL)
-        r.ping()  # Test connection
-        print("[OK] Successfully connected to Redis")
-    except Exception as e:
-        print(f"[ERROR] Failed to connect to Redis: {e}")
-        return
-    
-    print("mitt-worker started, waiting for jobs...")
+async def process_job(job, token):
+    """Process a single job from the queue."""
+    print(f"[DEBUG] Received job {job.id}")
+    print(f"[DEBUG] Job name: {job.name}")
+    print(f"[DEBUG] Job data: {job.data}")
+
+    video_url = job.data.get('videoUrl')
+    if not video_url:
+        raise ValueError(f"No videoUrl in job data: {job.data}")
+
+    # Update progress
+    for i in range(1,100,5):
+        await job.updateProgress(i)
+        time.sleep(0.5)
+    # Process the video
+    result = process_video(video_url)
+    # Update progress to complete
+    await job.updateProgress(100)
+
+    print(f"[OK] Job {job.id} completed successfully")
+    print(f"[DEBUG] Returning result: {result}")
+    return result
+
+
+async def run_worker() -> None:
+    """Run the BullMQ worker."""
+    print(f"[INFO] Connecting to Redis at {REDIS_HOST}:{REDIS_PORT}")
+
+    worker = Worker(
+        "video-analysis",
+        process_job,
+        {
+            "connection": {
+                "host": REDIS_HOST,
+                "port": REDIS_PORT,
+            }
+        }
+    )
+
+    print("[OK] mitt-worker started, waiting for jobs...")
 
     while True:
-        try:
-            # BullMQ stores jobs in bull:<queue>:wait list
-            job_data = r.brpoplpush(
-                "bull:video-analysis:wait",
-                "bull:video-analysis:active",
-                timeout=5
-            )
+        await asyncio.sleep(1)
 
-            if job_data:
-                try:
-                    job: BullMQJob = json.loads(job_data)
-                    video_url = job["data"]["videoUrl"]
-                    result = process_video(video_url)
 
-                    # Store result
-                    job_id = job["id"]
-                    r.hset(f"bull:video-analysis:{job_id}", "returnvalue", json.dumps(result))
-                    print(f"Job {job_id} completed")
-                except (json.JSONDecodeError, KeyError) as e:
-                    print(f"Error processing job: {e}")
-        except KeyboardInterrupt:
-            print("\nWorker shutting down...")
-            break
-        except Exception as e:
-            print(f"Worker error: {e}")
+def main():
+    """Entry point."""
+    asyncio.run(run_worker())
 
 
 if __name__ == "__main__":
-    run_worker()
+    main()

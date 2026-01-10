@@ -3,13 +3,21 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
-    "dev": "bun run docker:up && turbo run dev",
+    "dev": "bun run docker:up && bun run redis:flush && turbo run dev",
+    "start": "bun run docker:up && turbo run start",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
-    "docker:up": "docker compose up -d",
+    "docker:up": "docker compose up -d redis",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "docker:build": "docker compose build",
+    "redis:flush": "docker exec fudl-redis redis-cli FLUSHDB",
+    "worker:up": "docker compose up -d mitt-worker",
+    "worker:scale": "docker compose up -d --scale mitt-worker=3",
+    "worker:logs": "docker compose logs -f mitt-worker",
+    "worker:down": "docker compose stop mitt-worker",
+    "setup": "cd apps/mitt-worker && uv sync --all-extras"
   },
   "devDependencies": {
     "prettier": "^3.7.4",
