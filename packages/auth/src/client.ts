@@ -4,7 +4,7 @@ import {
   inferOrgAdditionalFields,
   organizationClient,
 } from "better-auth/client/plugins";
-import { auth } from "./server";
+import type { auth } from "./server";
 import { clientEnv } from "@repo/env/web";
 
 export const authClient = createAuthClient({

@@ -28,21 +28,38 @@ export default function Home() {
         <CardHeader>
           <CardTitle className="text-2xl">FUDL</CardTitle>
           <CardDescription>
-            {session ? `Welcome, ${session.user.name || session.user.email}!` : "Authentication Test"}
+            {session
+              ? `Welcome, ${session.user.name || session.user.email}!`
+              : "Authentication Test"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {session ? (
             <>
               <div className="text-sm space-y-1">
-                <p><span className="text-muted-foreground">Email:</span> {session.user.email}</p>
-                <p><span className="text-muted-foreground">Name:</span> {session.user.name || "Not set"}</p>
-                <p><span className="text-muted-foreground">Verified:</span> {session.user.emailVerified ? "Yes" : "No"}</p>
+                <p>
+                  <span className="text-muted-foreground">Email:</span>{" "}
+                  {session.user.email}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Name:</span>{" "}
+                  {session.user.name || "Not set"}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Verified:</span>{" "}
+                  {session.user.emailVerified ? "Yes" : "No"}
+                </p>
               </div>
               <Button
                 variant="destructive"
                 className="w-full"
-                onClick={() => authClient.signOut().then(() => window.location.reload())}
+                onClick={() => {
+                  try {
+                    authClient.signOut();
+                  } finally {
+                    window.location.reload();
+                  }
+                }}
               >
                 Sign Out
               </Button>
@@ -53,7 +70,9 @@ export default function Home() {
                 <Button className="w-full">Login</Button>
               </Link>
               <Link href="/register">
-                <Button variant="outline" className="w-full">Register</Button>
+                <Button variant="outline" className="w-full">
+                  Register
+                </Button>
               </Link>
             </div>
           )}
