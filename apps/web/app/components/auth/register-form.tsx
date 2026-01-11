@@ -122,18 +122,18 @@ export function RegisterForm() {
             />
           </div>
         </CardContent>
+        <CardFooter className="flex flex-col gap-4">
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? "Creating account..." : "Create account"}
+          </Button>
+          <p className="text-sm text-muted-foreground text-center">
+            Already have an account?{" "}
+            <Link href="/login" className="text-primary hover:underline">
+              Login
+            </Link>
+          </p>
+        </CardFooter>
       </form>
-      <CardFooter className="flex flex-col gap-4">
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Creating account..." : "Create account"}
-        </Button>
-        <p className="text-sm text-muted-foreground text-center">
-          Already have an account?{" "}
-          <Link href="/login" className="text-primary hover:underline">
-            Login
-          </Link>
-        </p>
-      </CardFooter>
     </Card>
   );
 }
