@@ -2,12 +2,15 @@
   "name": "fudl",
   "private": true,
   "scripts": {
-    "build": "turbo run build",
-    "dev": "bun run docker:up && bun run redis:flush && turbo run dev",
-    "start": "bun run docker:up && turbo run start",
+    "build": "dotenv -- turbo run build",
+    "dev": "bun run docker:up && bun run redis:flush && dotenv -- turbo run dev",
+    "start": "bun run docker:up && dotenv -- turbo run start",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
+    "db:generate": "dotenv -- turbo run db:generate",
+    "db:migrate": "dotenv -- turbo run db:migrate",
+    "db:deploy": "dotenv -- turbo run db:deploy",
     "docker:up": "docker compose up -d redis",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
@@ -17,11 +20,13 @@
     "worker:scale": "docker compose up -d --scale mitt-worker=3",
     "worker:logs": "docker compose logs -f mitt-worker",
     "worker:down": "docker compose stop mitt-worker",
-    "setup": "cd apps/mitt-worker && uv sync --all-extras"
+    "setup": "cd apps/mitt-worker && uv sync --all-extras",
+    "auth:generate": "bun x @better-auth/cli@latest generate --config \"packages/auth/src/server.ts\" --output \"packages/db/prisma/schema.prisma\""
   },
   "devDependencies": {
+    "dotenv-cli": "^7.4.4",
     "prettier": "^3.7.4",
-    "turbo": "^2.7.2",
+    "turbo": "^2.7.3",
     "typescript": "5.9.3"
   },
   "engines": {

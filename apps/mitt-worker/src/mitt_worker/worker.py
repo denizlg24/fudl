@@ -11,8 +11,8 @@ from bullmq import Worker
 
 load_dotenv()
 
-REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
-REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_HOST = os.getenv('REDIS_HOST')
+REDIS_PORT = int(os.getenv('REDIS_PORT'))
 
 
 class PlayerAnalysis(TypedDict):

@@ -1,0 +1,17 @@
+{
+  "name": "@repo/auth",
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./client": "./src/client.ts"
+  },
+  "dependencies": {
+    "@repo/db": "workspace:*",
+    "@repo/env": "workspace:*",
+    "better-auth": "^1.4.10",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
