@@ -11,10 +11,17 @@ from bullmq import Worker
 
 load_dotenv()
 
-REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
-REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_HOST = os.getenv('REDIS_HOST')
+if not REDIS_HOST:
+    raise RuntimeError("Environment variable REDIS_HOST is required but was not set.")
 
-
+_redis_port_str = os.getenv('REDIS_PORT')
+if not _redis_port_str:
+    raise RuntimeError("Environment variable REDIS_PORT is required but was not set.")
+try:
+    REDIS_PORT = int(_redis_port_str)
+except ValueError as exc:
+    raise RuntimeError(f"Environment variable REDIS_PORT must be an integer, got: {_redis_port_str!r}") from exc
 class PlayerAnalysis(TypedDict):
     player_id: str
     position: tuple[float, float]

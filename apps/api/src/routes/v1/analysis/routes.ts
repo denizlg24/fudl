@@ -1,8 +1,19 @@
+/**
+ * Analysis Routes - v1
+ * Handles video analysis job creation and status tracking
+ */
+
 import { Elysia, t } from "elysia";
-import { videoAnalysisQueue, videoAnalysisEvents } from "../queues/video-analysis";
+import { videoAnalysisQueue, videoAnalysisEvents } from "./queue";
 import type { JobStatus, CreateJobResponse, VideoAnalysisResult } from "@repo/types";
+import { authPlugin } from "../../../middleware";
 
 export const analysisRoutes = new Elysia({ prefix: "/analysis" })
+  .use(authPlugin)
+  /**
+   * POST /analysis/video
+   * Queue a new video analysis job
+   */
   .post(
     "/video",
     async ({ body }): Promise<CreateJobResponse> => {
@@ -12,11 +23,17 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
       return { jobId: job.id!, status: "queued" };
     },
     {
+      auth: true,
       body: t.Object({
         videoUrl: t.String(),
       }),
     }
   )
+
+  /**
+   * GET /analysis/job/:id
+   * Get the status of a specific job
+   */
   .get(
     "/job/:id",
     async ({ params }): Promise<JobStatus | { error: string }> => {
@@ -37,8 +54,14 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
       } catch (err) {
         return { error: err instanceof Error ? err.message : String(err) };
       }
-    }
+    },
+    { auth: true }
   )
+
+  /**
+   * GET /analysis/job/:id/stream
+   * Server-Sent Events stream for real-time job updates
+   */
   .get("/job/:id/stream", ({ params }) => {
     const jobId = params.id;
     const encoder = new TextEncoder();
@@ -71,7 +94,6 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
 
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
 
-            // Close stream if job is done
             if (state === "completed" || state === "failed") {
               cleanup();
             }
@@ -94,7 +116,6 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
           }
         };
 
-        // Event handlers - only react to events for this specific job
         const onActive = async ({ jobId: eventJobId }: { jobId: string }) => {
           if (eventJobId === jobId) await sendJobState();
         };
@@ -103,7 +124,6 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
           if (eventJobId === jobId) await sendJobState();
         };
 
-        // Use returnvalue from event directly to avoid race condition
         const onCompleted = async ({
           jobId: eventJobId,
           returnvalue,
@@ -116,7 +136,6 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
             const job = await videoAnalysisQueue.getJob(jobId);
             if (!job) return;
 
-            // Parse the returnvalue from the event (it's a JSON string)
             const result = returnvalue ? JSON.parse(returnvalue) : null;
 
             const data: JobStatus = {
@@ -140,13 +159,11 @@ export const analysisRoutes = new Elysia({ prefix: "/analysis" })
           if (eventJobId === jobId) await sendJobState();
         };
 
-        // Subscribe to BullMQ events
         videoAnalysisEvents.on("active", onActive);
         videoAnalysisEvents.on("progress", onProgress);
         videoAnalysisEvents.on("completed", onCompleted);
         videoAnalysisEvents.on("failed", onFailed);
 
-        // Send initial state
         await sendJobState();
       },
       cancel() {

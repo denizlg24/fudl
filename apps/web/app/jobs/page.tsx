@@ -13,7 +13,9 @@ import {
 } from "@repo/ui/components/card";
 import { Badge } from "@repo/ui/components/badge";
 import { Progress } from "@repo/ui/components/progress";
-import { useJobsStream, type JobStatus } from "../hooks/use-jobs-stream";
+import { Alert, AlertDescription, AlertTitle } from "@repo/ui/components/alert";
+import Link from "next/link";
+import { useJobsStream, AuthorizationError, type JobStatus } from "../hooks/use-jobs-stream";
 
 function useAnimatedValue(targetValue: number, duration: number = 300) {
   const [displayValue, setDisplayValue] = useState(targetValue);
@@ -93,17 +95,27 @@ export default function JobsPage() {
   const { jobs, isConnected, submitJob, clearJobs } = useJobsStream();
   const [videoUrl, setVideoUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<{ message: string; isAuthError: boolean } | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!videoUrl.trim()) return;
 
     setIsSubmitting(true);
+    setError(null);
     try {
       await submitJob(videoUrl);
       setVideoUrl("");
     } catch (err) {
       console.error("Failed to submit job:", err);
+      if (err instanceof AuthorizationError) {
+        setError({ message: err.message, isAuthError: true });
+      } else {
+        setError({ 
+          message: err instanceof Error ? err.message : "Failed to submit job", 
+          isAuthError: false 
+        });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -127,6 +139,23 @@ export default function JobsPage() {
           {isConnected ? "Ready" : "Connection issues"}
         </span>
       </div>
+
+      {/* Error Alert */}
+      {error && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertTitle>{error.isAuthError ? "Authentication Required" : "Error"}</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            <span>{error.message}</span>
+            {error.isAuthError && (
+              <Link href="/login">
+                <Button variant="outline" size="sm">
+                  Login
+                </Button>
+              </Link>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Submit Form */}
       <Card className="mb-8">
