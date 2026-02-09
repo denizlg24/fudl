@@ -7,8 +7,16 @@ import { Elysia } from "elysia";
 import { healthRoutes } from "./health";
 import { analysisRoutes } from "./analysis";
 import { authRoutes } from "./auth";
+import { seasonRoutes } from "./seasons";
+import { gameRoutes } from "./games";
+import { videoRoutes } from "./videos";
+import { inviteLinkRoutes } from "./invite-links";
 
 export const v1Routes = new Elysia({ prefix: "/v1" })
   .use(healthRoutes)
   .use(analysisRoutes)
-  .use(authRoutes);
+  .use(authRoutes)
+  .use(seasonRoutes)
+  .use(gameRoutes)
+  .use(videoRoutes)
+  .use(inviteLinkRoutes);

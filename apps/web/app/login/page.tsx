@@ -1,9 +1,25 @@
 import { LoginForm } from "../components/auth";
+import { Suspense } from "react";
 
-export default function LoginPage() {
+async function LoginFormWrapper({
+  searchParams,
+}: {
+  searchParams: Promise<{ redirect?: string }>;
+}) {
+  const params = await searchParams;
+  return <LoginForm redirectTo={params.redirect} />;
+}
+
+export default function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ redirect?: string }>;
+}) {
   return (
     <main className="min-h-screen flex items-center justify-center p-4">
-      <LoginForm />
+      <Suspense>
+        <LoginFormWrapper searchParams={searchParams} />
+      </Suspense>
     </main>
   );
 }

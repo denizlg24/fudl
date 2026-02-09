@@ -26,6 +26,7 @@ model User {
 
   members     Member[]
   invitations Invitation[]
+  videos      Video[]
 
   @@unique([email])
   @@map("user")
@@ -90,6 +91,10 @@ model Organization {
   metadata    String?
   members     Member[]
   invitations Invitation[]
+  inviteLinks InviteLink[]
+  seasons     Season[]
+  games       Game[]
+  videos      Video[]
 
   @@unique([slug])
   @@map("organization")
@@ -124,4 +129,102 @@ model Invitation {
   @@index([organizationId])
   @@index([email])
   @@map("invitation")
+}
+
+model InviteLink {
+  id             String       @id @default(cuid())
+  token          String       @unique
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById    String
+  role           String       @default("member")
+  maxUses        Int          @default(25)
+  useCount       Int          @default(0)
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([token])
+  @@map("invite_link")
+}
+
+// ===========================================================================
+// Domain Models
+// ===========================================================================
+
+model Season {
+  id             String       @id @default(cuid())
+  name           String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  games          Game[]
+
+  @@index([organizationId])
+  @@map("season")
+}
+
+model Game {
+  id             String       @id @default(cuid())
+  title          String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  seasonId       String?
+  season         Season?      @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  opponent       String?
+  date           DateTime?
+  location       String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  videos         Video[]
+
+  @@index([organizationId])
+  @@index([seasonId])
+  @@map("game")
+}
+
+enum VideoStatus {
+  PENDING
+  UPLOADING
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Video {
+  id             String       @id @default(cuid())
+  title          String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gameId         String?
+  game           Game?        @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  uploadedById   String
+  uploadedBy     User         @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  // Storage
+  storageKey     String?
+  storageUrl     String?
+  mimeType       String?
+  fileSize       Int?
+  durationSecs   Float?
+
+  // Processing
+  status         VideoStatus  @default(PENDING)
+  jobId          String?
+  errorMessage   String?
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([gameId])
+  @@index([uploadedById])
+  @@index([status])
+  @@map("video")
 }
