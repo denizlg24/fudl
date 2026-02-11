@@ -2,10 +2,43 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "@repo/db";
 import { haveIBeenPwned, organization } from "better-auth/plugins";
+import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { authEnv } from "@repo/env/auth";
+import { Resend } from "resend";
+import {
+  verificationEmail,
+  resetPasswordEmail,
+  deleteAccountVerificationEmail,
+  invitationEmail,
+} from "@repo/email";
 
 const prismaClient = prisma;
+const resend = new Resend(authEnv.RESEND_API_KEY);
+
+const webAppUrl =
+  authEnv.NODE_ENV === "production"
+    ? (authEnv.WEB_APP_URL ?? "http://localhost:3000")
+    : "http://localhost:3000";
+
+/** Send an email via Resend and log failures. */
+async function sendEmail(
+  to: string,
+  template: { subject: string; html: string },
+) {
+  const { error } = await resend.emails.send({
+    from: authEnv.EMAIL_FROM,
+    to,
+    subject: template.subject,
+    html: template.html,
+  });
+  if (error) {
+    console.error(
+      `[FUDL] Failed to send "${template.subject}" to ${to}:`,
+      error,
+    );
+  }
+}
 
 export const auth = betterAuth({
   appName: "Fudl",
@@ -19,7 +52,7 @@ export const auth = betterAuth({
   trustedOrigins:
     authEnv.NODE_ENV === "production"
       ? [authEnv.WEB_APP_URL, authEnv.API_URL].filter((url): url is string =>
-          Boolean(url)
+          Boolean(url),
         )
       : ["http://localhost:3000", "http://localhost:3002"],
 
@@ -27,12 +60,144 @@ export const auth = betterAuth({
     provider: "postgresql",
   }),
 
+  user: {
+    additionalFields: {
+      sport: { type: "string", required: false },
+      city: { type: "string", required: false },
+      country: { type: "string", required: false },
+      heightCm: { type: "number", required: false },
+      weightKg: { type: "number", required: false },
+      dateOfBirth: { type: "string", required: false },
+      bio: { type: "string", required: false },
+      position: { type: "string", required: false },
+      jerseyNumber: { type: "number", required: false },
+      instagramHandle: { type: "string", required: false },
+      twitterHandle: { type: "string", required: false },
+    },
+    deleteUser: {
+      enabled: true,
+      async sendDeleteAccountVerification({ user, url, token }) {
+        const deleteUrl = `${webAppUrl}/delete-account?token=${token}`;
+        await sendEmail(
+          user.email,
+          deleteAccountVerificationEmail({
+            userName: user.name,
+            url: deleteUrl,
+          }),
+        );
+      },
+      async beforeDelete(user) {
+        // Block deletion if the user is the sole owner of any organization.
+        // This prevents orphaned orgs with no one who can manage them.
+        const memberships = await prismaClient.member.findMany({
+          where: { userId: user.id, role: "owner" },
+          select: {
+            organizationId: true,
+            organization: { select: { name: true } },
+          },
+        });
+
+        if (memberships.length > 0) {
+          // For each owned org, check if there are other owners
+          const soleOwnedOrgs: string[] = [];
+          for (const m of memberships) {
+            const ownerCount = await prismaClient.member.count({
+              where: {
+                organizationId: m.organizationId,
+                role: "owner",
+              },
+            });
+            if (ownerCount <= 1) {
+              soleOwnedOrgs.push(m.organization.name);
+            }
+          }
+
+          if (soleOwnedOrgs.length > 0) {
+            throw new APIError("BAD_REQUEST", {
+              message: `You are the sole owner of: ${soleOwnedOrgs.join(", ")}. Transfer ownership before deleting your account.`,
+            });
+          }
+        }
+      },
+    },
+  },
+
+  emailVerification: {
+    sendOnSignUp: true,
+    autoSignInAfterVerification: false,
+    async sendVerificationEmail({ user, url, token }) {
+      // Extract callbackURL from better-auth's generated url (contains ?token=...&callbackURL=...)
+      // and forward it as ?redirect= on our custom verification page URL
+      let verifyUrl = `${webAppUrl}/verify-email?token=${token}`;
+      try {
+        const parsed = new URL(url);
+        const callbackURL = parsed.searchParams.get("callbackURL");
+        if (callbackURL && callbackURL !== "/") {
+          verifyUrl += `&redirect=${encodeURIComponent(callbackURL)}`;
+        }
+      } catch {
+        // If url parsing fails, just use the base verifyUrl without redirect
+      }
+      await sendEmail(
+        user.email,
+        verificationEmail({ userName: user.name, url: verifyUrl }),
+      );
+    },
+  },
+
   emailAndPassword: {
     enabled: true,
     autoSignIn: false,
     requireEmailVerification: true,
+    async sendResetPassword({ user, url, token }) {
+      const resetUrl = `${webAppUrl}/reset-password?token=${token}`;
+      await sendEmail(
+        user.email,
+        resetPasswordEmail({ userName: user.name, url: resetUrl }),
+      );
+    },
+  },
+
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          // Auto-set active organization on login
+          const member = await prismaClient.member.findFirst({
+            where: { userId: session.userId },
+            orderBy: { createdAt: "desc" },
+          });
+          if (member) {
+            return {
+              data: {
+                ...session,
+                activeOrganizationId: member.organizationId,
+              },
+            };
+          }
+          return { data: session };
+        },
+      },
+    },
   },
 
   experimental: { joins: true },
-  plugins: [haveIBeenPwned(), organization(), nextCookies()],
+  plugins: [
+    haveIBeenPwned(),
+    organization({
+      async sendInvitationEmail(data) {
+        const inviteLink = `${webAppUrl}/invite?id=${data.id}`;
+        await sendEmail(
+          data.email,
+          invitationEmail({
+            inviterName: data.inviter.user.name ?? data.inviter.user.email,
+            organizationName: data.organization.name,
+            role: data.role,
+            inviteLink,
+          }),
+        );
+      },
+    }),
+    nextCookies(),
+  ],
 });

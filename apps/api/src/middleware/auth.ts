@@ -84,7 +84,7 @@ export const authPlugin = new Elysia({ name: "plugin/auth" })
           }
 
           const userMembership = membership.members.find(
-            (m) => m.userId === user.id
+            (m) => m.userId === user.id,
           );
 
           if (!userMembership || userMembership.role !== "owner") {
@@ -92,6 +92,66 @@ export const authPlugin = new Elysia({ name: "plugin/auth" })
             return {
               error: "Forbidden",
               message: "Must be organization owner",
+            };
+          }
+        },
+      };
+    },
+    /**
+     * Macro to require coach-level access (owner or admin/coach role).
+     * Usage: .get("/org/:organizationId", handler, { isCoach: true })
+     */
+    isCoach(enabled: boolean) {
+      if (!enabled) return;
+
+      return {
+        async beforeHandle({ user, request, params, query, body, set }) {
+          if (!user) {
+            set.status = 401;
+            return {
+              error: "Unauthorized",
+              message: "Authentication required",
+            };
+          }
+
+          const organizationId =
+            (params as Record<string, string>)?.organizationId ||
+            (query as Record<string, string>)?.organizationId ||
+            (body as Record<string, string>)?.organizationId;
+
+          if (!organizationId) {
+            set.status = 400;
+            return {
+              error: "Bad Request",
+              message: "Organization ID is required",
+            };
+          }
+
+          const membership = await auth.api.getFullOrganization({
+            headers: request.headers,
+            query: { organizationId },
+          });
+
+          if (!membership) {
+            set.status = 403;
+            return {
+              error: "Forbidden",
+              message: "Not a member of this organization",
+            };
+          }
+
+          const userMembership = membership.members.find(
+            (m) => m.userId === user.id,
+          );
+
+          if (
+            !userMembership ||
+            (userMembership.role !== "owner" && userMembership.role !== "admin")
+          ) {
+            set.status = 403;
+            return {
+              error: "Forbidden",
+              message: "Coach-level access required",
             };
           }
         },
@@ -141,7 +201,7 @@ export const authPlugin = new Elysia({ name: "plugin/auth" })
           }
 
           const userMembership = membership.members.find(
-            (m) => m.userId === user.id
+            (m) => m.userId === user.id,
           );
 
           if (!userMembership) {
