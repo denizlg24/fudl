@@ -131,45 +131,37 @@ export function UploadIndicator() {
   return (
     <div className="fixed bottom-4 right-4 z-50 w-80 rounded-lg border border-border bg-background shadow-lg overflow-hidden">
       {/* Header */}
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-accent/50 transition-colors"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <Upload className="size-4 text-primary shrink-0" />
-        <span className="text-sm font-medium flex-1 text-left truncate">
-          {headerText}
-        </span>
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <button
+          type="button"
+          className="flex items-center gap-2 flex-1 min-w-0 hover:opacity-80 transition-opacity"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <Upload className="size-4 text-primary shrink-0" />
+          <span className="text-sm font-medium flex-1 text-left truncate">
+            {headerText}
+          </span>
+          {expanded ? (
+            <ChevronDown className="size-4 text-muted-foreground shrink-0" />
+          ) : (
+            <ChevronUp className="size-4 text-muted-foreground shrink-0" />
+          )}
+        </button>
         {allDone && (
-          <div
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
             className="inline-flex items-center justify-center size-6 shrink-0 rounded-md hover:bg-accent cursor-pointer"
-            onClick={(e) => {
-              e.stopPropagation();
+            onClick={() => {
               for (const u of uploads) {
                 dismissUpload(u.videoId);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                for (const u of uploads) {
-                  dismissUpload(u.videoId);
-                }
               }
             }}
           >
             <X className="size-3.5" />
             <span className="sr-only">Dismiss all</span>
-          </div>
+          </button>
         )}
-        {expanded ? (
-          <ChevronDown className="size-4 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronUp className="size-4 text-muted-foreground shrink-0" />
-        )}
-      </button>
+      </div>
 
       {/* Overall progress bar (always visible when uploading) */}
       {activeCount > 0 && (

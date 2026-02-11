@@ -33,7 +33,8 @@ import { clientEnv } from "@repo/env/web";
 interface UploadEntry {
   videoId: string;
   organizationId: string;
-  file: File;
+  /** The original file reference — set by startUpload, used by retryUpload. May be undefined for entries created via progress updates only. */
+  file?: File;
   progress: UploadProgress;
 }
 
@@ -110,7 +111,7 @@ function createUploadStore(): UploadStore {
     uploads.set(videoId, {
       videoId,
       organizationId,
-      file: existing?.file ?? new File([], ""),
+      file: existing?.file,
       progress,
     });
     persistActiveIds();

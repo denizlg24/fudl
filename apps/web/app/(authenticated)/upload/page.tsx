@@ -32,7 +32,7 @@ export default async function UploadPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await requireAuth();
+  await requireAuth();
   const org = await getServerOrg();
 
   if (!org) {

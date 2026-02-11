@@ -167,7 +167,7 @@ export const videoRoutes = new Elysia({
             t.Literal("video/x-matroska"),
           ]),
         ),
-        fileSize: t.Optional(t.Number({ minimum: 0 })),
+        fileSize: t.Optional(t.Integer({ minimum: 0 })),
         tagIds: t.Optional(t.Array(t.String())),
       }),
     },

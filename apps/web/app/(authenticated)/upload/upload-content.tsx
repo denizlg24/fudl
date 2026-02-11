@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm, Controller } from "react-hook-form";
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema";
@@ -20,7 +19,6 @@ import { TagCombobox } from "../components/tag-combobox";
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
-import { Separator } from "@repo/ui/components/separator";
 import { DatePicker } from "@repo/ui/components/date-picker";
 import {
   Select,
@@ -162,7 +160,6 @@ export function UploadContent({
   seasons: SeasonOption[];
   preselectedGameId: string | null;
 }) {
-  const router = useRouter();
   const { startUpload } = useUploadActions();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -479,7 +476,7 @@ export function UploadContent({
           body: JSON.stringify({
             title: values.title,
             seasonId: values.seasonId,
-            date: values.date ? new Date(values.date).toISOString() : undefined,
+            date: values.date || undefined,
             location: values.location || undefined,
             tagIds: allTagIds.length > 0 ? allTagIds : undefined,
           }),

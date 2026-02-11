@@ -431,8 +431,6 @@ export const uploadRoutes = new Elysia({
     async ({ params, body }) => {
       const { organizationId, videoId } = params;
 
-      console.log(`[thumbnail] Received upload request for video ${videoId}`);
-
       // Validate video exists and belongs to org
       const video = await prisma.video.findFirst({
         where: { id: videoId, organizationId },
@@ -455,11 +453,15 @@ export const uploadRoutes = new Elysia({
         throw new ApiError(400, "File too large (max 5MB)");
       }
 
+      const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
       const contentType = file.type || "image/jpeg";
 
-      console.log(
-        `[thumbnail] Uploading ${data.length} bytes (${contentType}) for video ${videoId}`,
-      );
+      if (!ALLOWED_IMAGE_TYPES.includes(contentType)) {
+        throw new ApiError(
+          400,
+          `Invalid image type '${contentType}'. Allowed: ${ALLOWED_IMAGE_TYPES.join(", ")}`,
+        );
+      }
 
       // Upload to S3
       const { key } = await uploadThumbnail(
@@ -476,10 +478,6 @@ export const uploadRoutes = new Elysia({
           thumbnailKey: key,
         },
       });
-
-      console.log(
-        `[thumbnail] Successfully uploaded thumbnail for video ${videoId}: ${key}`,
-      );
 
       return { thumbnailKey: key };
     },

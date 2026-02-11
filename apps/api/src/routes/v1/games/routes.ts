@@ -43,7 +43,12 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
         include: {
           season: { select: { id: true, name: true } },
           videos: {
-            select: { id: true, status: true, thumbnailKey: true },
+            select: {
+              id: true,
+              status: true,
+              thumbnailKey: true,
+              thumbnailUrl: true,
+            },
             orderBy: { createdAt: "desc" },
           },
           _count: { select: { videos: true } },
@@ -62,7 +67,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
               status: video.status,
               thumbnailUrl: video.thumbnailKey
                 ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
-                : null,
+                : (video.thumbnailUrl ?? null),
             })),
           ),
         })),
