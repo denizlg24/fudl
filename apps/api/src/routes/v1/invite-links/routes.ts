@@ -220,6 +220,11 @@ const tokenRoutes = new Elysia({
    * Accept an invite link: validates the token, checks the user isn't already
    * a member, adds them to the organization, and increments the use count.
    * Requires authentication.
+   *
+   * Security: Prevents duplicate acceptances — existing members (including
+   * the org owner) cannot inflate useCount. The useCount increment is
+   * guarded by a conditional update (useCount < maxUses) to prevent race
+   * conditions from concurrent requests.
    */
   .post(
     "/:token/accept",
@@ -253,7 +258,8 @@ const tokenRoutes = new Elysia({
         );
       }
 
-      // Check if user is already a member of this org
+      // Check if user is already a member of this org (covers all roles
+      // including owner, admin/coach, and regular member)
       const existingMember = await prisma.member.findFirst({
         where: {
           organizationId: link.organizationId,
@@ -262,7 +268,8 @@ const tokenRoutes = new Elysia({
       });
 
       if (existingMember) {
-        // Set the org as active and return success (idempotent)
+        // Already a member — do NOT increment useCount.
+        // Just set the org as active and return idempotent success.
         await auth.api.setActiveOrganization({
           headers: request.headers,
           body: { organizationId: link.organizationId },
@@ -276,21 +283,48 @@ const tokenRoutes = new Elysia({
         };
       }
 
-      // Add user as a member via better-auth's API so session state stays consistent
-      await auth.api.addMember({
-        headers: request.headers,
-        body: {
-          organizationId: link.organizationId,
-          userId: user.id,
-          role: link.role as "member" | "admin",
+      // Atomically increment useCount only if the link still has capacity.
+      // This prevents race conditions where two concurrent requests from
+      // different users (or the same user via parallel requests) both pass
+      // the isLinkValid check but would exceed maxUses.
+      const updated = await prisma.inviteLink.updateMany({
+        where: {
+          id: link.id,
+          useCount: { lt: link.maxUses },
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
         },
-      });
-
-      // Increment use count atomically
-      await prisma.inviteLink.update({
-        where: { id: link.id },
         data: { useCount: { increment: 1 } },
       });
+
+      if (updated.count === 0) {
+        // Another request consumed the last use, or the link was
+        // revoked/expired between our check and the update.
+        throw new ApiError(
+          410,
+          "This invite link has reached its maximum number of uses or is no longer valid",
+        );
+      }
+
+      // Add user as a member via better-auth's API so session state stays consistent
+      try {
+        await auth.api.addMember({
+          headers: request.headers,
+          body: {
+            organizationId: link.organizationId,
+            userId: user.id,
+            role: link.role as "member" | "admin",
+          },
+        });
+      } catch (error) {
+        // If addMember fails (e.g. race condition where member was added
+        // between our check and here), roll back the useCount increment
+        await prisma.inviteLink.update({
+          where: { id: link.id },
+          data: { useCount: { decrement: 1 } },
+        });
+        throw error;
+      }
 
       // Set the org as active for the user's session
       await auth.api.setActiveOrganization({

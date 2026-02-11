@@ -94,6 +94,13 @@ export const profileSchema = z.object({
       },
       { message: "Enter a valid date" },
     )
+    .refine(
+      (val) => {
+        if (!val) return true;
+        return new Date(val) <= new Date();
+      },
+      { message: "Date of birth cannot be in the future" },
+    )
     .optional()
     .or(z.literal("")),
   city: z.string().trim().max(100, "City must be at most 100 characters"),
