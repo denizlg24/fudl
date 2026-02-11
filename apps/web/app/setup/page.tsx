@@ -23,23 +23,9 @@ import {
 } from "@repo/ui/components/form";
 import { useForm, type ControllerRenderProps } from "react-hook-form";
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema";
-import { z } from "zod";
+import { setupSchema, type SetupValues } from "@repo/types/validations";
 import { useState, useEffect, useCallback } from "react";
 import { Spinner } from "@repo/ui/components/spinner";
-
-const setupSchema = z.object({
-  name: z.string().min(2, "Team name must be at least 2 characters"),
-  slug: z
-    .string()
-    .min(2, "Slug must be at least 2 characters")
-    .max(48, "Slug must be at most 48 characters")
-    .regex(
-      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-      "Slug must be lowercase letters, numbers, and hyphens only",
-    ),
-});
-
-type SetupValues = z.infer<typeof setupSchema>;
 
 function slugify(value: string): string {
   return value
@@ -205,7 +191,7 @@ export default function SetupPage() {
                 )}
               />
             </CardContent>
-            <CardFooter>
+            <CardFooter className="mt-6">
               <Button
                 type="submit"
                 className="w-full"

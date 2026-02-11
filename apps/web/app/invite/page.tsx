@@ -15,8 +15,9 @@ import {
 import { Spinner } from "@repo/ui/components/spinner";
 import Link from "next/link";
 import { toast } from "sonner";
+import { clientEnv } from "@repo/env/web";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3002";
+const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
 
 interface InvitationInfo {
   id: string;

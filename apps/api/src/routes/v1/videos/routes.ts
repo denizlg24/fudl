@@ -97,15 +97,22 @@ export const videoRoutes = new Elysia({
       return { video };
     },
     {
-      auth: true,
-      isOrgMember: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
       }),
       body: t.Object({
-        title: t.String({ minLength: 1 }),
+        title: t.String({ minLength: 1, maxLength: 200 }),
         gameId: t.Optional(t.String()),
-        mimeType: t.Optional(t.String()),
+        mimeType: t.Optional(
+          t.Union([
+            t.Literal("video/mp4"),
+            t.Literal("video/webm"),
+            t.Literal("video/quicktime"),
+            t.Literal("video/x-msvideo"),
+            t.Literal("video/x-matroska"),
+          ]),
+        ),
         fileSize: t.Optional(t.Integer({ minimum: 0 })),
       }),
     },
@@ -190,13 +197,13 @@ export const videoRoutes = new Elysia({
       return { video };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         videoId: t.String(),
       }),
       body: t.Object({
-        title: t.Optional(t.String({ minLength: 1 })),
+        title: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
         gameId: t.Optional(t.Nullable(t.String())),
       }),
     },
@@ -230,7 +237,7 @@ export const videoRoutes = new Elysia({
       return { deleted: true };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         videoId: t.String(),

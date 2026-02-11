@@ -22,16 +22,8 @@ import {
 import Link from "next/link";
 import { useForm, type ControllerRenderProps } from "react-hook-form";
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema";
-import { z } from "zod";
+import { registerSchema, type RegisterValues } from "@repo/types/validations";
 import { useState } from "react";
-
-const registerSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Enter a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-});
-
-type RegisterValues = z.infer<typeof registerSchema>;
 
 interface RegisterFormProps {
   redirectTo?: string;
@@ -57,6 +49,7 @@ export function RegisterForm({ redirectTo }: RegisterFormProps) {
       email: values.email,
       password: values.password,
       name: values.name,
+      ...(redirectTo ? { callbackURL: redirectTo } : {}),
     });
 
     if (result.error) {

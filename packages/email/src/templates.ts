@@ -50,7 +50,7 @@ function footer(): string {
     <tr>
       <td style="padding: 32px 0 16px; border-top: 1px solid #e5e7eb;">
         <p style="color: ${mutedColor}; font-size: 12px; line-height: 1.5; margin: 0;">
-          &copy; ${new Date().getFullYear()} FUDL &mdash; AI-powered flag football analytics.
+          &copy; ${new Date().getFullYear()} FUDL &mdash; AI-powered analytics for teams.
         </p>
       </td>
     </tr>
@@ -163,6 +163,61 @@ export function resetPasswordEmail({
 
   return {
     subject: "Reset your FUDL password",
+    html: layout(body),
+  };
+}
+
+export interface DeleteAccountEmailParams {
+  userName?: string | null;
+  url: string;
+}
+
+/** Email sent when a user requests account deletion — must click to confirm. */
+export function deleteAccountVerificationEmail({
+  userName,
+  url,
+}: DeleteAccountEmailParams): { subject: string; html: string } {
+  const greeting = userName ? `Hi ${userName},` : "Hi,";
+
+  const body = `
+    <tr>
+      <td>
+        <h2 style="margin: 0 0 16px; font-size: 18px; color: #dc2626;">Account Deletion Request</h2>
+        <p style="margin: 0 0 8px; color: #374151; line-height: 1.6;">${greeting}</p>
+        <p style="margin: 0; color: #374151; line-height: 1.6;">
+          We received a request to permanently delete your FUDL account. This action
+          <strong>cannot be undone</strong> — your personal data will be removed and you
+          will be removed from all teams.
+        </p>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" style="padding: 32px 0;">
+        <a href="${url}"
+           style="background-color: #dc2626; color: #ffffff; padding: 12px 24px;
+                  border-radius: 6px; text-decoration: none; display: inline-block;
+                  font-weight: 600; font-size: 14px;">
+          Confirm Account Deletion
+        </a>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <p style="color: ${mutedColor}; font-size: 13px; line-height: 1.5;">
+          If you didn't request this, you can safely ignore this email. Your account
+          will remain active.
+        </p>
+        <p style="color: ${mutedColor}; font-size: 13px; line-height: 1.5;">
+          <strong>Note:</strong> You must be logged in when you click the confirmation link.
+          The link expires in 24 hours.
+        </p>
+        ${fallbackLink(url)}
+      </td>
+    </tr>
+  `;
+
+  return {
+    subject: "Confirm your FUDL account deletion",
     html: layout(body),
   };
 }

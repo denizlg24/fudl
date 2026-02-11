@@ -23,15 +23,8 @@ import {
 import Link from "next/link";
 import { useForm, type ControllerRenderProps } from "react-hook-form";
 import { standardSchemaResolver } from "@hookform/resolvers/standard-schema";
-import { z } from "zod";
+import { loginSchema, type LoginValues } from "@repo/types/validations";
 import { useState } from "react";
-
-const loginSchema = z.object({
-  email: z.string().email("Enter a valid email address"),
-  password: z.string().min(1, "Password is required"),
-});
-
-type LoginValues = z.infer<typeof loginSchema>;
 
 interface LoginFormProps {
   redirectTo?: string;
@@ -113,7 +106,15 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
                 field: ControllerRenderProps<LoginValues, "password">;
               }) => (
                 <FormItem>
-                  <FormLabel>Password</FormLabel>
+                  <div className="flex items-center justify-between">
+                    <FormLabel>Password</FormLabel>
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
                   <FormControl>
                     <Input
                       type="password"

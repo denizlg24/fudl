@@ -24,9 +24,23 @@ model User {
   sessions      Session[]
   accounts      Account[]
 
+  // Profile details
+  sport           String?
+  city            String?
+  country         String?
+  heightCm        Int?
+  weightKg        Float?
+  dateOfBirth     DateTime?
+  bio             String?
+  position        String?
+  jerseyNumber    Int?
+  instagramHandle String?
+  twitterHandle   String?
+
   members     Member[]
   invitations Invitation[]
   videos      Video[]
+  inviteLinks InviteLink[]
 
   @@unique([email])
   @@map("user")
@@ -136,7 +150,8 @@ model InviteLink {
   token          String       @unique
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdById    String
+  createdById    String?
+  createdBy      User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   role           String       @default("member")
   maxUses        Int          @default(25)
   useCount       Int          @default(0)
@@ -204,8 +219,8 @@ model Video {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   gameId         String?
   game           Game?        @relation(fields: [gameId], references: [id], onDelete: SetNull)
-  uploadedById   String
-  uploadedBy     User         @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  uploadedById   String?
+  uploadedBy     User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
 
   // Storage
   storageKey     String?

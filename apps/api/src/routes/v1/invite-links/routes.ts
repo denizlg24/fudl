@@ -37,7 +37,7 @@ function isLinkValid(link: {
   return true;
 }
 
-// ─── Org-scoped routes (require auth + org ownership) ─────────────────────────
+// ─── Org-scoped routes (require auth + coach-level access) ────────────────────
 
 const orgScopedRoutes = new Elysia({
   prefix: "/orgs/:organizationId/invite-links",
@@ -64,7 +64,7 @@ const orgScopedRoutes = new Elysia({
       };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
       }),
@@ -104,13 +104,13 @@ const orgScopedRoutes = new Elysia({
       };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
       }),
       body: t.Object({
         role: t.Optional(
-          t.Union([t.Literal("member"), t.Literal("admin")], {
+          t.Union([t.Literal("admin"), t.Literal("member")], {
             default: "member",
           }),
         ),
@@ -154,7 +154,7 @@ const orgScopedRoutes = new Elysia({
       return { success: true };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         linkId: t.String(),

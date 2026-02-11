@@ -60,22 +60,31 @@ FUDL is an AI-powered flag football analytics platform — a Hudl clone with rou
 
 ## Design Objectives
 
-The goal of FUDL is to provide flag football coaches and players with:
+The goal of FUDL is to provide coaches and players with:
 
 1. **Video Upload & Management** — Upload game footage, organize by team/game/season.
-2. **AI Route Detection** — Automatically detect and classify receiver routes from video.
+2. **AI Route Analysis** — Detect and classify various data from the games on demand.
 3. **Player Tracking** — Track individual player movements across frames.
 4. **Game Analytics** — Provide stats, tendencies, and visualizations for game review.
-5. **Team/Organization Management** — Multi-tenant org support (already scaffolded via better-auth).
+5. **Team/Organization Management** — Multi-tenant org support.
 6. **Real-time Processing Feedback** — Show job progress as videos are analyzed.
+
+### Package commands
+
+- You can access all available commands at turbo.json, for database commands and repo commands.
+- You should never spin up dev servers unless explicitly told to do so.
 
 ### Design Principles
 
-- **Type-safe end-to-end:** Shared types in `@repo/types`, Zod validation for env/forms, Prisma for DB types.
+- **Type-safe end-to-end:** Shared types in `@repo/types`, Zod validation for env/forms, Prisma for DB types. Never use bypasses for type-safety such as converting to unknown or record<string,unknown> if there is an error where you think there shouldn't be it's usually due to stale typescript language server or bad imports.
 - **Separation of concerns:** API server handles auth + job queuing, Python worker handles ML, web app handles presentation.
 - **Progressive enhancement:** Start with polling for job status, evolve to SSE (endpoint already exists).
 - **Monorepo cohesion:** Shared packages for UI, types, auth, DB, env — no code duplication.
 - **Performance-first:** Follow Vercel React best practices (see Skills section).
+- **Server-first** For best client performance we should optimize the app to do as much server side rendering as it can unless otherwise needed. Eg.: A layout.tsx should never be a client component as that means that everything in that tree will be client side rendered. page.tsx should never be a client component, bad for SEO and you can never generate metadata for example.
+- **Avoiding use-effect** Use effect is a place prone to bugs and endless loops and causes for too many refreshes, avoid it when possible.
+- **Input Validation and Sanitization** Always use client side validation as well as server side validation for user input. This is very important for security.
+- **Database migrations** When updating database instead of using db push use db:migrate.
 
 ---
 
@@ -105,9 +114,27 @@ The goal of FUDL is to provide flag football coaches and players with:
 - Zod-validated environment variables across all packages (including `RESEND_API_KEY`, `EMAIL_FROM`); auth env uses lazy `createEnv` proxy to prevent import-time crashes
 - Sonner toast notifications in root layout
 - react-hook-form + zod validation on all forms (login, register, setup, invite)
-- **Domain models synced to database** via `prisma db push` (Prisma Postgres doesn't support `migrate dev` advisory locks)
+- **Domain models synced to database** via Prisma migrations (`prisma migrate dev` now works after `migrate reset`)
 - **API CRUD routes for Season, Game, Video** — org-scoped REST endpoints with auth/membership checks
 - **Next.js caching enabled** — `experimental: { useCache: true }` in `apps/web/next.config.ts` (Next.js 16 renamed `dynamicIO` to `useCache`)
+- **Role system with display-name mapping** — DB stores `"owner"`, `"admin"`, `"member"`; displayed as Owner, Coach, Player. Shared role module in `@repo/types/src/roles.ts` with helpers (`getRoleDisplayName`, `roleBadgeVariant`, `isCoachRole`, `isOwnerRole`, `ASSIGNABLE_ROLES`).
+- **`isCoach` API middleware macro** — in `apps/api/src/middleware/auth.ts`. Allows owner + admin (coach-level) access. Used for all domain data write operations.
+- **Coach-gated permissions on all API write routes** — Seasons, Games, Videos POST/PATCH/DELETE use `isCoach: true`. Invite link management (list/create/revoke) also uses `isCoach: true`. Read operations remain `isOrgMember: true`.
+- **Dashboard coach-gating** — Upload video, delete game, and create game actions are hidden from players on the frontend.
+- **Team roster page** — `/roster` shows all team members grouped by role (Coaches, Players) with avatars, names, and role badges.
+- **Authenticated layout nav bar** — Persistent `h-14` top nav with Home, Seasons, Roster links, avatar dropdown with org switcher, mobile hamburger menu.
+- **Account deletion flow** — Email-verified account deletion via better-auth's `deleteUser` feature. `beforeDelete` hook blocks sole org owners. Delete account verification email template in `@repo/email`. Profile settings UI with sole-ownership guard and confirmation dialog (type DELETE + email verification).
+- **Shared Zod validation schemas** — `@repo/types/validations` provides centralized validation schemas for all forms: auth (login, register), profile, password change, team settings, invite, invite links, domain models (season, game, video), and setup. Used by both client forms (`react-hook-form`) and can be used by API routes.
+- **Server-side auth helpers** — `apps/web/app/lib/auth.ts` provides `getServerSession()`, `requireAuth()`, `getServerOrg()`, `getActiveMember()`, `listUserOrgs()`, `requireAuthWithOrg()` for server component data fetching.
+- **Server component architecture** — Dashboard, profile settings, team settings, roster, and authenticated layout are all async server components with extracted client components for interactivity.
+- **`@repo/db` as direct dependency of `apps/web`** — Allows server components to query the database directly (e.g., sole-ownership check in profile settings).
+- **Seasons page** — `/seasons` lists all seasons with name, date range, game count. Coach-gated create/edit/delete via Dialog and AlertDialog. Server component page with client component for interactivity. Uses `standardSchemaResolver` for form validation.
+- **Invite redirect chain fix** — Registration via invite link now preserves the invite token through the entire email verification flow: register → verification email → verify page → login → invite acceptance. `callbackURL` is extracted from better-auth's `url` parameter in `sendVerificationEmail` and threaded through as `?redirect=` query params.
+- **No forced `/setup` redirect** — Users without a team are no longer force-redirected. The authenticated layout, `requireAuthWithOrg()`, and all org-dependent pages handle the no-org state gracefully.
+- **No-team dashboard** — When a user has no active organization, the dashboard shows a welcome page with two options: "Create a team" (links to `/setup`) and "Join a team" (paste invite link URL, parses token, redirects to `/invite?token=...`).
+- **No-team empty states** — Org-dependent pages (Seasons, Roster, Team Settings) show a shared `<NoTeamState>` component instead of rendering blank or redirecting. Directs users to the dashboard to create or join a team.
+- **Nav bar org-awareness** — Seasons and Roster nav links are hidden when user has no active org. Team settings link in dropdown is conditionally rendered.
+- **Ownership transfer** — Team owners can transfer ownership to any non-owner member via Team Settings. Two-step process: promotes target to owner, demotes self to coach. AlertDialog confirmation. Profile settings danger zone links to Team Settings when sole-owner block is active.
 
 ### Placeholder / Incomplete
 
@@ -116,7 +143,9 @@ The goal of FUDL is to provide flag football coaches and players with:
 - No ML models for route detection implemented
 - No file/video upload infrastructure (S3, cloud storage)
 - No actual analytics dashboards or visualizations
-- No web pages for domain models (game list, video upload, etc.)
+- No web pages for games or videos (game detail, video upload, etc.)
+- No season detail page (`/seasons/:seasonId` — clicking a season row navigates there but the page doesn't exist yet)
+- Design specs written for home page, team settings, and profile settings (see `designs/` directory) — not yet implemented
 - `@repo/ui` has `chart.tsx` and `resizable.tsx` commented out (recharts v3 and react-resizable-panels v4 type incompatibilities)
 
 ---
@@ -240,7 +269,6 @@ These skills are installed but designed for different project architectures. Use
 
 - **`react`** — Component and routing patterns. Note: FUDL uses Next.js App Router, not `react-router-dom`. Use only the general component patterns, not the routing or `@lobehub/ui` references.
 - **`i18n`** — Internationalization with `react-i18next`. Use if/when FUDL adds multi-language support.
-- **`project-overview`** — LobeChat-specific project structure. Not directly applicable — use the FUDL-specific structure documented in this file instead.
 - **`update-docs`** — Next.js documentation updater. Use if contributing to `apps/docs`.
 - **`agent-md-refactor`** — For refactoring this `agents.md` file if it grows too large.
 
@@ -250,7 +278,6 @@ These skills are installed but designed for different project architectures. Use
 
 ### Frontend (apps/web)
 
-- All pages currently use `"use client"` — evaluate whether Server Components can be leveraged for data fetching and initial page loads.
 - Use `@repo/ui` components exclusively — do not create one-off UI components in `apps/web` unless they are truly page-specific.
 - Forms must use `react-hook-form` + `zod` schemas for validation.
 - API calls go through `fetch()` with `credentials: "include"` to the Elysia API. Consider adopting SWR or React Query for caching and deduplication.
@@ -585,5 +612,470 @@ This ensures continuity across sessions and prevents redundant work.
 - `apps/web/app/(authenticated)/settings/members/page.tsx` — Replaced static invite link with secure link management UI
 - `apps/web/app/invite/page.tsx` — Refactored into TokenInviteFlow + EmailInviteFlow, removed `?org=` flow
 - `AGENTS.md` — Updated current state, session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 7 — 2026-02-09
+
+**Focus:** Design specs for three core authenticated pages
+
+**Completed:**
+
+1. **`designs/home.md`** — Authenticated home page (game library/feed). Key design decisions:
+   - Video-first game feed layout inspired by Hudl's approach — single-column list of games, not a card grid or dashboard
+   - Persistent top nav bar with slim `h-14` design, no sidebar (intentional — feature set is too small for sidebar overhead)
+   - Game cards as flat horizontal rows with thumbnail, opponent, meta, and video status — no heavy card borders
+   - Three game card states: completed (with AI badge), processing (inline progress bar), and no-footage (with upload CTA)
+   - Skeleton loading states instead of spinners
+   - Empty state using `<Empty>` component
+   - Season filter via `<Select>` with URL query param persistence
+   - Mobile: cards stack vertically with full-width thumbnails
+
+2. **`designs/team-settings.md`** — Team settings page (owner/admin access). Key design decisions:
+   - Replaces current `/settings/members` monolith with organized sections: Team Profile, Members, Pending Invitations, Invite Links, Danger Zone
+   - Single scrollable page with clear section headings (no tabs/nested routes)
+   - Inline editing for team name (click to edit pattern)
+   - Member list uses `<Item>` component instead of `<Table>` for better readability and mobile support
+   - Invite form collapsed by default, expands on click
+   - Danger Zone with multi-step confirmation (type team name to delete)
+   - Permission-denied state for non-owner/non-admin users
+
+3. **`designs/profile-settings.md`** — Profile settings page (all users). Key design decisions:
+   - Per-field save pattern (each field saves independently, no "Save all" button)
+   - Narrower container (`max-w-2xl`) for intimate/personal feel
+   - Avatar + identity hero section at top (display-only)
+   - Password change collapsed behind `<Collapsible>` component
+   - Theme switcher (Light/Dark/System) using radio group or selectable cards
+   - Teams list showing all orgs the user belongs to, with Switch/Leave actions
+   - Danger Zone for account deletion with ownership transfer guard
+
+**Key architectural decisions:**
+
+- **Shared app shell:** All three specs reference a common global nav bar pattern (defined in `home.md`). This replaces the current approach of duplicating inline headers in every page. The authenticated layout (`apps/web/app/(authenticated)/layout.tsx`) should render this shell.
+- **No sidebar:** Intentional decision for now. The CSS sidebar tokens in `globals.css` are preserved for future use if the feature set grows.
+- **Dark-mode first:** Sports apps are used in film rooms and sidelines. All specs are designed with dark mode as the primary context.
+- **Consistent patterns across settings pages:** Both team-settings and profile-settings use the same visual patterns — back link, section headings with `<Separator>`, inline forms, `<Skeleton>` loading, danger zone with `border-destructive/50`.
+
+**Files created:**
+
+- `designs/home.md`
+- `designs/team-settings.md`
+- `designs/profile-settings.md`
+
+**Files modified:**
+
+- `AGENTS.md` — Updated "Placeholder / Incomplete" section to reference new design specs, added session log
+
+### Session 8 — 2026-02-09
+
+**Focus:** Role system, coach-gated permissions, roster page, API permission audit
+
+**Completed:**
+
+1. **Shared role module** — Created `packages/types/src/roles.ts` with `DbRole` type, `ROLE_DISPLAY_NAME` map (owner→Owner, admin→Coach, member→Player), helper functions (`getRoleDisplayName`, `roleBadgeVariant`, `isCoachRole`, `isOwnerRole`), and `ASSIGNABLE_ROLES` array. Exported via `packages/types/src/index.ts` and `package.json` exports.
+
+2. **`isCoach` API middleware macro** — Added to `apps/api/src/middleware/auth.ts` between `isOrgOwner` and `isOrgMember`. Allows owner + admin access, returns 403 for regular members.
+
+3. **API permission audit and fix** — Audited all 27 API routes. Changed 12 routes from `isOrgOwner` to `isCoach`:
+   - Seasons: POST, PATCH, DELETE (3 routes)
+   - Games: POST, PATCH, DELETE (3 routes)
+   - Videos: POST (was `isOrgMember`), PATCH, DELETE (3 routes)
+   - Invite links: GET (list), POST (create), DELETE (revoke) (3 routes)
+   - Read operations remain `isOrgMember: true` (correct — players need to view data)
+
+4. **Dashboard coach-gating** — `apps/web/app/(authenticated)/dashboard/page.tsx` now fetches the user's role and conditionally renders upload/delete/create actions only for coaches.
+
+5. **Team settings role display** — `apps/web/app/(authenticated)/settings/team/page.tsx` uses shared role helpers. All role badges show display names (Owner/Coach/Player), role selectors use `ASSIGNABLE_ROLES`.
+
+6. **Profile settings role display** — `apps/web/app/(authenticated)/settings/profile/page.tsx` uses shared role helpers for team role badges and ownership checks.
+
+7. **Team roster page** — Created `apps/web/app/(authenticated)/roster/page.tsx`. Shows all members grouped by role (Coaches first, then Players), with avatars, names, emails, role badges. Skeleton loading and empty state.
+
+8. **Roster nav link** — Added `{ href: "/roster", label: "Roster" }` to `NAV_LINKS` in `apps/web/app/(authenticated)/layout.tsx`.
+
+**Key decisions:**
+
+- **Display-name-only role mapping** — No schema changes or better-auth config changes needed. DB stores `"owner"/"admin"/"member"`, display layer maps to Owner/Coach/Player.
+- **`isCoach` for invite link management** — Coaches can now list, create, and revoke invite links (previously owner-only). This enables coaches to independently recruit players.
+- **Video POST changed from `isOrgMember` to `isCoach`** — Players should not initiate uploads; that's a coaching/admin responsibility.
+- **SSE endpoint has no auth** — `GET /analysis/job/:id/stream` is public. This is a known gap that should be fixed when the analysis pipeline is built out.
+
+**Files created:**
+
+- `packages/types/src/roles.ts`
+- `apps/web/app/(authenticated)/roster/page.tsx`
+
+**Files modified:**
+
+- `packages/types/src/index.ts` — Added `export * from "./roles.js"`
+- `packages/types/package.json` — Added `"./roles"` export
+- `apps/api/src/middleware/auth.ts` — Added `isCoach` macro
+- `apps/api/src/routes/v1/seasons/routes.ts` — `isOrgOwner` → `isCoach` on POST/PATCH/DELETE
+- `apps/api/src/routes/v1/games/routes.ts` — `isOrgOwner` → `isCoach` on POST/PATCH/DELETE
+- `apps/api/src/routes/v1/videos/routes.ts` — `isOrgMember` → `isCoach` on POST, `isOrgOwner` → `isCoach` on PATCH/DELETE
+- `apps/api/src/routes/v1/invite-links/routes.ts` — `isOrgOwner` → `isCoach` on GET/POST/DELETE
+- `apps/web/app/(authenticated)/dashboard/page.tsx` — Coach-gated upload/delete actions
+- `apps/web/app/(authenticated)/settings/team/page.tsx` — Role display + permission updates
+- `apps/web/app/(authenticated)/settings/profile/page.tsx` — Role display updates
+- `apps/web/app/(authenticated)/layout.tsx` — Added Roster nav link
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 9 — 2026-02-09
+
+**Focus:** Extended athlete profile fields — database, auth config, shared types, and profile settings UI
+
+**Completed:**
+
+1. **Shared profile types** — Created `packages/types/src/profile.ts` (NEW) with:
+   - `Sport` type and `SPORTS` constant array: `FLAG_FOOTBALL`, `TACKLE_FOOTBALL`, `RUGBY`, `HANDBALL`, `BJJ`
+   - `SPORT_LABELS` map for display names (e.g., `BJJ` → "Brazilian Jiu-Jitsu")
+   - `SPORT_OPTIONS` dropdown-friendly `{ value, label }` array
+   - `POSITIONS_BY_SPORT` map with sport-specific positions (7 flag football, 10 tackle football, 10 rugby, 7 handball, 5 BJJ belt ranks)
+   - `getPositionOptions()` helper and `isSport()` type guard
+   - Exported via `packages/types/src/index.ts` and `package.json` `"./profile"` export
+
+2. **Prisma schema — 11 new fields on User model** (`packages/db/prisma/schema.prisma`):
+   - `sport` (String?) — stored as plain string, validated at app layer via `isSport()`
+   - `city`, `country` (String?) — location
+   - `heightCm` (Int?), `weightKg` (Float?) — physical measurements in metric
+   - `dateOfBirth` (DateTime?) — age calculated on frontend
+   - `bio` (String?) — short about text
+   - `position` (String?) — sport-specific position/belt rank
+   - `jerseyNumber` (Int?)
+   - `instagramHandle`, `twitterHandle` (String?) — social media
+
+3. **better-auth `user.additionalFields`** — Configured all 11 fields in `packages/auth/src/server.ts`. This makes them available through `authClient.useSession()` (read) and `authClient.updateUser()` (write) via the existing `inferAdditionalFields<typeof auth>()` on the client.
+
+4. **Database synced** — `prisma db push` successful, all 11 columns added to the `user` table. Prisma client regenerated.
+
+5. **Profile settings page — new "Profile Details" section** (`apps/web/app/(authenticated)/settings/profile/page.tsx`):
+   - Added between "Personal Information" and "Password" sections
+   - **Bio** — `<Textarea>` with per-field save
+   - **Sport** — `<Select>` dropdown with all 5 sports
+   - **Position** — Dynamic `<Select>` that shows sport-specific positions (or belt ranks for BJJ). Only visible when a sport is selected. Label changes to "Belt Rank" for BJJ.
+   - **Jersey Number** — Number input (0-999)
+   - **Height & Weight** — Side-by-side number inputs (cm / kg)
+   - **Date of Birth** — Date input
+   - **City & Country** — Side-by-side text inputs
+   - **Social Media** — Instagram and X/Twitter handle inputs
+   - All fields use the existing `SaveButton` component with per-field dirty/saving/saved state
+   - Sport change auto-clears position if the current position isn't valid for the new sport
+   - Generic `saveProfileField()` helper handles the update → original reset → saved flash pattern
+   - Skeleton loading state while session is pending
+
+**Key decisions:**
+
+- **Plain string for sport, not Prisma enum** — Avoids a migration every time a new sport is added. Validation happens at the app layer via `isSport()`.
+- **`dateOfBirth` stored as string in better-auth** — better-auth's `additionalFields` only supports `"string"`, `"number"`, and `"boolean"` types. The DB column is `DateTime?`, but better-auth reads/writes it as an ISO string. The UI uses `type="date"` input and slices to `YYYY-MM-DD` for display.
+- **No custom API route needed** — `authClient.updateUser()` handles all additional fields natively through better-auth's built-in user update endpoint. No custom Elysia route was necessary.
+- **Auth client unchanged** — `inferAdditionalFields<typeof auth>()` automatically picks up the new fields from the server config at type level.
+- **Session user cast to `Record<string, unknown>`** — The session type from `inferAdditionalFields` should include the new fields, but to avoid any runtime issues with the initial null state, values are accessed via a safe cast.
+
+**Files created:**
+
+- `packages/types/src/profile.ts`
+
+**Files modified:**
+
+- `packages/types/src/index.ts` — Added `export * from "./profile"`
+- `packages/types/package.json` — Added `"./profile"` export path
+- `packages/db/prisma/schema.prisma` — Added 11 profile fields to User model
+- `packages/auth/src/server.ts` — Added `user.additionalFields` with all 11 fields
+- `apps/web/app/(authenticated)/settings/profile/page.tsx` — Added Profile Details section with all fields + per-field save
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 10 — 2026-02-10
+
+**Focus:** Server component migration — convert all remaining `"use client"` pages/layouts to async server components
+
+**Completed:**
+
+1. **Server-side auth helpers** — Created `apps/web/app/lib/auth.ts` with reusable helpers wrapping `auth.api.*` calls from `@repo/auth/server`:
+   - `getServerSession()` — Returns session or null
+   - `requireAuth()` — Returns session, redirects to `/login` if none
+   - `getServerOrg()` — Returns full org (members, invitations) or null
+   - `getActiveMember()` — Returns `{ role, ... }` or null
+   - `listUserOrgs()` — Returns org array or null
+   - `requireAuthWithOrg()` — Returns `{ session, org }`, redirects if missing
+
+2. **Dashboard page** — `apps/web/app/(authenticated)/dashboard/page.tsx` rewritten as async server component. Calls `requireAuthWithOrg()`, passes session + org data to extracted `<DashboardContent>` client component (`dashboard-content.tsx`).
+
+3. **Profile settings page** — `apps/web/app/(authenticated)/settings/profile/page.tsx` rewritten as server component. Calls `requireAuth()` + `listUserOrgs()`, extracts 11 profile fields from `session.user`, passes `ProfileInitialData` to `<ProfileSettingsContent>` client component (`profile-content.tsx`).
+
+4. **Team settings page** — `apps/web/app/(authenticated)/settings/team/page.tsx` rewritten as server component. Calls `requireAuth()`, `getServerOrg()`, `getActiveMember()` in parallel, fetches invite links from Elysia API with cookie forwarding, maps members/invitations to serializable format, passes to `<TeamSettingsContent>` client component (`team-content.tsx`).
+
+5. **Members page redirect** — `apps/web/app/(authenticated)/settings/members/page.tsx` converted to server component that just calls `redirect("/settings/team")`.
+
+6. **Authenticated layout** — `apps/web/app/(authenticated)/layout.tsx` converted to async server component with server-side session/org resolution.
+
+7. **Roster page** — Already a pure server component (renders HTML only, no client interactivity).
+
+**Migration pattern applied:**
+
+- Page becomes an async server component that fetches data server-side via `auth.api.*` helpers
+- Interactive logic extracted into a `"use client"` component in the same directory (e.g., `team-content.tsx`)
+- Data passed as serializable props (dates converted to ISO strings, objects mapped to plain shapes)
+- Client components handle mutations via `authClient` and have `reloadData()` for client-side refresh after mutations
+
+**Pages intentionally kept as `"use client"`:**
+
+- `invite/page.tsx` — Dynamic flow based on URL params, handles both authenticated and unauthenticated states
+- `setup/page.tsx` — Form-driven org creation flow
+- `(auth)/login/page.tsx` and `(auth)/register/page.tsx` — Auth forms
+
+**Key learnings:**
+
+- **`auth.api.getFullOrganization()` member shape:** Each member has nested `user: { id, name, email, image }` — NOT flat `userName`/`userEmail`. The mapping in `team/page.tsx` uses `(m as Record<string, unknown>).user` cast because the TypeScript type doesn't expose `user` directly.
+- **Date serialization:** `Date` objects from better-auth must be converted to ISO strings via `toISOString()` before passing as props to client components.
+- **Cookie forwarding for API calls:** When calling the Elysia API from server components, forward cookies via `const reqHeaders = await headers(); const cookie = reqHeaders.get("cookie") || ""; fetch(url, { headers: { cookie } })`.
+
+**Files created:**
+
+- `apps/web/app/lib/auth.ts`
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx`
+- `apps/web/app/(authenticated)/settings/profile/profile-content.tsx`
+- `apps/web/app/(authenticated)/settings/team/team-content.tsx`
+
+**Files modified:**
+
+- `apps/web/app/(authenticated)/layout.tsx` — Converted to async server component
+- `apps/web/app/(authenticated)/dashboard/page.tsx` — Rewritten as server component
+- `apps/web/app/(authenticated)/settings/profile/page.tsx` — Rewritten as server component
+- `apps/web/app/(authenticated)/settings/team/page.tsx` — Rewritten as server component
+- `apps/web/app/(authenticated)/settings/members/page.tsx` — Converted to redirect
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 11 — 2026-02-10
+
+**Focus:** Fix Turbopack crashes preventing dev server from serving pages
+
+**Problem:** The dev server started fine (`Ready in 2.2s`) but crashed with a `FATAL: An unexpected Turbopack error occurred` panic on every page request. Two separate issues were discovered and fixed.
+
+**Completed:**
+
+1. **Fixed Turbopack `@source` panic** — `packages/ui/src/styles/globals.css` had incorrect relative paths in `@source` directives:
+   - `@source "../../../apps/**/*.{ts,tsx}"` resolved to `packages/apps/` (nonexistent) — fixed to `@source "../../../../apps/**/*.{ts,tsx}"` (4 levels up from `packages/ui/src/styles/`)
+   - Removed `@source "../../../components/**/*.{ts,tsx}"` entirely (pointed to nonexistent `packages/components/` directory)
+   - These bad glob paths caused Turbopack's CSS/glob scanner to panic internally
+
+2. **Windows symlink permission error** — After fixing the `@source` panic, a second crash appeared: `TurbopackInternalError: create symlink to .../pg@8.16.3.../node_modules/pg — A required privilege is not held by the client (os error 1314)`. Root cause: Bun uses symlinks in `node_modules/.bun/` for package hoisting, and Turbopack follows these symlinks, trying to create its own in `.next/`. Windows requires either admin privileges or Developer Mode for symlink creation.
+   - **Mitigation:** Added `serverExternalPackages: ["pg", "@prisma/adapter-pg"]` to `apps/web/next.config.ts` — prevents Turbopack from bundling these native packages
+   - **Resolution:** Running the terminal as Administrator grants symlink privileges. Alternatively, enabling Windows Developer Mode would also work.
+
+3. **Fixed `@repo/email` module resolution error** — After the symlink issue was resolved, pages that import `@repo/auth/server` (which imports `@repo/email`) failed with `Can't resolve './templates.js'`. Root cause: `packages/email/src/index.ts` used `.js` extensions in imports (`from "./templates.js"`), which is correct for `NodeNext` module resolution but incompatible with Turbopack's bundler resolution.
+   - Changed imports to extensionless: `from "./templates"` (matching the pattern used by `@repo/types` and other workspace packages)
+   - Updated `packages/email/tsconfig.json` to override `module`/`moduleResolution` to `ESNext`/`Bundler` (since the package is consumed directly as raw TypeScript by Turbopack, not compiled to JS)
+
+**Key learnings:**
+
+- **`@source` paths in Tailwind v4:** These are relative to the CSS file location, not the project root. Count directory levels carefully — `packages/ui/src/styles/globals.css` needs 4 levels of `../` to reach monorepo root.
+- **Bun + Turbopack + Windows:** Bun's `node_modules/.bun/` symlink-based hoisting is incompatible with Turbopack on Windows without admin/Developer Mode. `serverExternalPackages` helps for server-only packages but doesn't fully prevent the issue. Running as admin is the pragmatic fix.
+- **Workspace packages consumed by bundlers:** When a workspace package is consumed directly as raw TypeScript (via `"exports": { ".": "./src/index.ts" }`), it should use `"moduleResolution": "Bundler"` in its tsconfig, not `"NodeNext"`. `NodeNext` requires `.js` extensions in imports, but Turbopack expects extensionless imports to resolve to `.ts` files.
+
+**Files modified:**
+
+- `packages/ui/src/styles/globals.css` — Fixed `@source` directive paths
+- `apps/web/next.config.ts` — Added `serverExternalPackages: ["pg", "@prisma/adapter-pg"]`
+- `packages/email/src/index.ts` — Changed `./templates.js` imports to extensionless `./templates`
+- `packages/email/tsconfig.json` — Overrode `module`/`moduleResolution` to `ESNext`/`Bundler`
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 12 — 2026-02-10
+
+**Focus:** Account deletion implementation — schema changes, email template, better-auth config, profile settings UI, and shared validation schemas
+
+**Completed:**
+
+1. **Schema changes** — `packages/db/prisma/schema.prisma`:
+   - `Video.uploadedById` changed from `String` (required, `onDelete: Cascade`) to `String?` (nullable, `onDelete: SetNull`) — preserves team videos when uploader deletes account
+   - `InviteLink.createdById` changed from bare `String` to `String?` with proper FK relation to `User` (`onDelete: SetNull`)
+   - Added `inviteLinks InviteLink[]` relation to the `User` model
+
+2. **Database migration** — Ran `prisma migrate reset --force` (needed due to drift from previous `db push` sessions), then created and applied migration `20260210133234_account_deletion_schema_changes`. Regenerated Prisma client.
+
+3. **Delete account verification email** — Added `DeleteAccountEmailParams` interface and `deleteAccountVerificationEmail()` function to `packages/email/src/templates.ts`. Uses red CTA button, warns about permanence, notes user must be logged in when clicking link. Exported from `packages/email/src/index.ts`.
+
+4. **better-auth `deleteUser` config** — In `packages/auth/src/server.ts`:
+   - `enabled: true`
+   - `sendDeleteAccountVerification`: sends email via Resend using the new template
+   - `beforeDelete` hook: queries `member` table for orgs where user is sole owner, throws `APIError("BAD_REQUEST")` if any found — server-side safety net
+
+5. **Server component sole-ownership check** — `apps/web/app/(authenticated)/settings/profile/page.tsx` queries `member` table via Prisma for all orgs where user is sole owner, passes `soleOwnedOrgNames: string[]` to client component. Added `@repo/db` as direct dependency of `apps/web`.
+
+6. **Profile settings client component** — `apps/web/app/(authenticated)/settings/profile/profile-content.tsx`:
+   - Updated `ProfileInitialData` interface with `soleOwnedOrgNames: string[]`
+   - Delete handler calls `authClient.deleteUser({ callbackURL })`, shows success toast
+   - Danger zone: disabled delete button with warning if sole owner; confirmation dialog with type-DELETE guard and email verification explanation
+   - Removed broken role badge imports/display from teams list (better-auth `listOrganizations()` doesn't return roles)
+
+7. **Shared Zod validation schemas** — Created `packages/types/src/validations.ts` with centralized schemas:
+   - Auth: `loginSchema`, `registerSchema`
+   - Profile: `profileSchema` (unified), `changePasswordSchema`, `validateProfilePosition()` cross-field validator
+   - Team: `teamNameSchema`, `inviteSchema`, `inviteLinkSchema`
+   - Domain: `createSeasonSchema`, `updateSeasonSchema`, `createGameSchema`, `updateGameSchema`, `createVideoSchema`, `updateVideoSchema`, `analysisVideoSchema`
+   - Setup: `setupSchema`
+
+8. **Profile form refactor** — Converted from per-field save pattern to unified single-form save with `react-hook-form` + `profileSchema`. Single "Save changes" button, dirty state tracking.
+
+9. **Video API routes verified** — No changes needed. Prisma handles nullable `uploadedBy` relation gracefully — `include` returns `null` when FK is null.
+
+**Key decisions:**
+
+- **`Video.uploadedById` → SetNull** — Team videos are org-owned data; deleting a user shouldn't delete team content.
+- **`InviteLink.createdById` → SetNull** — Preserves invite links even after creator leaves; the link remains functional.
+- **`beforeDelete` hook is the real safety net** — UI guard (disabled button) is defense-in-depth; the server-side hook prevents deletion even if the UI is bypassed.
+- **`prisma migrate dev` now works** — After `migrate reset`, advisory lock issues from Prisma Postgres are resolved. Future schema changes should use `db:migrate`.
+- **Unified profile form** — Replaced per-field save pattern with single form + single save button. Better UX (one action to save all changes) and simpler code (one `react-hook-form` instance).
+
+**Files created:**
+
+- `packages/types/src/validations.ts`
+
+**Files modified:**
+
+- `packages/db/prisma/schema.prisma` — Nullable `uploadedById` + `createdById` with SetNull, User relations
+- `packages/auth/src/server.ts` — Added `deleteUser` config with email verification and sole-owner guard
+- `packages/email/src/templates.ts` — Added `deleteAccountVerificationEmail()`
+- `packages/email/src/index.ts` — Exported new template
+- `apps/web/app/(authenticated)/settings/profile/page.tsx` — Server-side sole-ownership query
+- `apps/web/app/(authenticated)/settings/profile/profile-content.tsx` — Unified profile form, delete account UI, removed broken role imports
+- `apps/web/package.json` — Added `@repo/db` dependency
+- `AGENTS.md` — Updated current state, session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 15 — 2026-02-10
+
+**Focus:** Seasons page — list, create, edit, delete
+
+**Completed:**
+
+1. **Exported season validation types** — Added `CreateSeasonValues` and `UpdateSeasonValues` type exports to `packages/types/src/validations.ts` (previously schemas existed but had no exported inferred types).
+
+2. **Seasons server component page** — `apps/web/app/(authenticated)/seasons/page.tsx`:
+   - Async server component using `requireAuth()`, `getServerOrg()`, `getActiveMember()` from `../../lib/auth`
+   - Fetches seasons from Elysia API via `GET /orgs/${orgId}/seasons` with cookie forwarding
+   - Uses `Promise.all` for parallel data fetching (seasons + activeMember)
+   - Passes `initialSeasons`, `role`, `activeOrgId` to client component
+
+3. **Seasons client component** — `apps/web/app/(authenticated)/seasons/seasons-content.tsx`:
+   - **Season list** — Each row shows: calendar icon, season name, date range (formatted), game count badge
+   - **Create season dialog** — `react-hook-form` + `standardSchemaResolver(createSeasonSchema)`. Fields: name, start date, end date. Coach-only.
+   - **Edit season dialog** — Opens from dropdown menu, pre-fills current values, resets on open. Coach-only.
+   - **Delete season** — AlertDialog confirmation explaining games are preserved. Coach-only.
+   - **Empty state** — Uses `<Empty>` component with different messages for coaches vs players
+   - **Coach-gating** — Create button and per-row edit/delete actions only visible to coaches (`isCoachRole(role)`)
+   - **Optimistic UI** — Created seasons prepended to list, updated seasons replaced in-place, deleted seasons removed immediately
+   - Season rows are clickable (navigate to `/seasons/${seasonId}`) with keyboard support
+
+**Key learnings:**
+
+- **`standardSchemaResolver` not `zodResolver`** — The project uses Zod v4 which implements the Standard Schema interface. `@hookform/resolvers/zod` (`zodResolver`) is for Zod v3 and throws type errors with Zod v4. All existing forms in the project use `standardSchemaResolver` from `@hookform/resolvers/standard-schema`.
+
+**Files created:**
+
+- `apps/web/app/(authenticated)/seasons/page.tsx`
+- `apps/web/app/(authenticated)/seasons/seasons-content.tsx`
+
+**Files modified:**
+
+- `packages/types/src/validations.ts` — Added `CreateSeasonValues` and `UpdateSeasonValues` type exports
+- `AGENTS.md` — Updated current state (added Seasons page to Implemented, updated Placeholder/Incomplete), added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 16 — 2026-02-10
+
+**Focus:** Invite flow fix, no-team UX overhaul
+
+**Completed:**
+
+1. **Fixed invite redirect chain** — Registration via invite link (`/invite?token=abc123`) now preserves the token through the entire email verification flow:
+   - `register-form.tsx` passes `callbackURL: redirectTo` to `authClient.signUp.email()`
+   - `packages/auth/src/server.ts` `sendVerificationEmail` extracts `callbackURL` from better-auth's `url` param and appends it as `&redirect=` to the verification page URL
+   - `verify-email/page.tsx` and `verify-email-content.tsx` thread `redirect` param through to login link
+   - Full chain: `/invite?token=abc` → register → verification email → verify page → login → `/invite?token=abc`
+
+2. **Removed forced `/setup` redirect** — Users without a team are no longer force-redirected:
+   - `apps/web/app/(authenticated)/layout.tsx` — Removed all `redirect("/setup")` calls, fetches org data conditionally
+   - `apps/web/app/lib/auth.ts` — `requireAuthWithOrg()` returns `null` instead of redirecting when no active org
+   - `apps/web/app/(authenticated)/components/nav-bar.tsx` — `orgName` and `activeOrgId` now `string | null`, added `requiresOrg` field to `NAV_LINKS`, Seasons/Roster hidden when no org, Team settings link conditional
+
+3. **No-team dashboard** — Created `apps/web/app/(authenticated)/dashboard/no-team-dashboard.tsx`:
+   - Welcome message with user name
+   - Two cards: "Create a team" (links to `/setup`) and "Join a team" (paste invite URL, parse token, redirect to `/invite?token=...`)
+   - Uses existing UI components from `@repo/ui`
+
+4. **Shared `<NoTeamState>` component** — Created `apps/web/app/(authenticated)/components/no-team-state.tsx`:
+   - Reusable empty state for org-dependent pages
+   - Shows "No team selected" message with customizable description and link to dashboard
+
+5. **Updated org-dependent pages to handle no-org gracefully:**
+   - `seasons/page.tsx` — Shows `<NoTeamState>` instead of `return null`
+   - `roster/page.tsx` — Shows `<NoTeamState>` instead of `return null`
+   - `settings/team/page.tsx` — Shows `<NoTeamState>` instead of `redirect("/setup")`
+
+**Key decisions:**
+
+- **Invite URL parsing in no-team dashboard** — The "Join a team" card accepts a full URL (e.g., `http://localhost:3000/invite?token=abc`), parses the `token` param, and redirects to the invite page. This is simpler than calling the accept API directly and allows the existing invite flow to handle auth state.
+- **Shared `<NoTeamState>` component** — Server component (no "use client"), uses `<Empty>` from `@repo/ui` for consistent empty state styling. Accepts optional `message` prop for page-specific messaging.
+- **No redirect from team settings** — Previously redirected to `/setup` which was confusing. Now shows an informative empty state with a link back to the dashboard.
+
+**Files created:**
+
+- `apps/web/app/(authenticated)/dashboard/no-team-dashboard.tsx`
+- `apps/web/app/(authenticated)/components/no-team-state.tsx`
+
+**Files modified:**
+
+- `apps/web/app/components/auth/register-form.tsx` — Passes `callbackURL` on signup
+- `packages/auth/src/server.ts` — Extracts `callbackURL` from verification URL
+- `apps/web/app/verify-email/page.tsx` — Reads and passes `redirect` param
+- `apps/web/app/verify-email/verify-email-content.tsx` — Threads `redirect` to login link
+- `apps/web/app/(authenticated)/layout.tsx` — Removed forced redirect, conditional org fetch
+- `apps/web/app/(authenticated)/components/nav-bar.tsx` — Org-aware nav links
+- `apps/web/app/lib/auth.ts` — `requireAuthWithOrg()` returns null instead of redirecting
+- `apps/web/app/(authenticated)/dashboard/page.tsx` — Renders `<NoTeamDashboard>` when no org
+- `apps/web/app/(authenticated)/seasons/page.tsx` — Shows `<NoTeamState>` when no org
+- `apps/web/app/(authenticated)/roster/page.tsx` — Shows `<NoTeamState>` when no org
+- `apps/web/app/(authenticated)/settings/team/page.tsx` — Shows `<NoTeamState>` instead of redirect
+- `AGENTS.md` — Updated current state, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 17 — 2026-02-10
+
+**Focus:** Ownership transfer implementation
+
+**Completed:**
+
+1. **Transfer ownership action in Team Settings** — `apps/web/app/(authenticated)/settings/team/team-content.tsx`:
+   - Added "Transfer ownership" menu item in the member dropdown, visible only to the current owner, targeting non-owner members
+   - Two-step transfer: (1) promote target to `"owner"` via `authClient.organization.updateMemberRole()`, (2) demote self to `"admin"` (coach)
+   - Standalone `AlertDialog` controlled by `transferTarget` state (avoids dropdown closing issues)
+   - Confirmation dialog explains: target becomes owner, current user becomes coach, only reversible by new owner
+   - Loading state with `Spinner` during transfer
+   - After success: updates `currentMemberRole` state to `"admin"`, clears transfer target, calls `reloadData()`
+   - Error handling: if promote succeeds but demote fails, reloads data to reflect partial state
+
+2. **Profile settings danger zone guidance** — `apps/web/app/(authenticated)/settings/profile/profile-content.tsx`:
+   - Added "Go to Team Settings" link below the sole-owner warning message
+   - Links to `/settings/team` so users know where to transfer ownership to unblock account deletion
+
+**Key decisions:**
+
+- **No custom API route needed** — `authClient.organization.updateMemberRole()` with `role: "owner"` works natively through better-auth's organization plugin. Only an existing owner can promote to owner.
+- **Two-step transfer (promote + demote)** — Rather than atomic transfer, this uses two sequential `updateMemberRole` calls. If the second call fails, the org temporarily has two owners, which is a safe partial state.
+- **Standalone AlertDialog** — Used controlled `open` prop instead of `AlertDialogTrigger` inside the dropdown menu. This prevents the dialog from closing when the dropdown unmounts.
+
+**Files modified:**
+
+- `apps/web/app/(authenticated)/settings/team/team-content.tsx` — Added transfer ownership action with AlertDialog
+- `apps/web/app/(authenticated)/settings/profile/profile-content.tsx` — Added Team Settings link in sole-owner warning
+- `AGENTS.md` — Updated Implemented section, added session log
 
 **Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅

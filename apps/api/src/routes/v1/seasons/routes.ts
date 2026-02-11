@@ -56,12 +56,12 @@ export const seasonRoutes = new Elysia({
       return { season };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
       }),
       body: t.Object({
-        name: t.String({ minLength: 1 }),
+        name: t.String({ minLength: 1, maxLength: 200 }),
         startDate: t.Optional(t.String({ format: "date" })),
         endDate: t.Optional(t.String({ format: "date" })),
       }),
@@ -137,13 +137,13 @@ export const seasonRoutes = new Elysia({
       return { season };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         seasonId: t.String(),
       }),
       body: t.Object({
-        name: t.Optional(t.String({ minLength: 1 })),
+        name: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
         startDate: t.Optional(t.Nullable(t.String({ format: "date" }))),
         endDate: t.Optional(t.Nullable(t.String({ format: "date" }))),
       }),
@@ -175,7 +175,7 @@ export const seasonRoutes = new Elysia({
       return { deleted: true };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         seasonId: t.String(),

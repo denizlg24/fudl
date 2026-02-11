@@ -80,17 +80,17 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       return { game };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
       }),
       body: t.Object({
-        title: t.String({ minLength: 1 }),
+        title: t.String({ minLength: 1, maxLength: 200 }),
         seasonId: t.Optional(t.String()),
-        opponent: t.Optional(t.String()),
+        opponent: t.Optional(t.String({ maxLength: 200 })),
         date: t.Optional(t.String({ format: "date-time" })),
-        location: t.Optional(t.String()),
-        notes: t.Optional(t.String()),
+        location: t.Optional(t.String({ maxLength: 200 })),
+        notes: t.Optional(t.String({ maxLength: 2000 })),
       }),
     },
   )
@@ -193,18 +193,18 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       return { game };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         gameId: t.String(),
       }),
       body: t.Object({
-        title: t.Optional(t.String({ minLength: 1 })),
+        title: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
         seasonId: t.Optional(t.Nullable(t.String())),
-        opponent: t.Optional(t.Nullable(t.String())),
+        opponent: t.Optional(t.Nullable(t.String({ maxLength: 200 }))),
         date: t.Optional(t.Nullable(t.String({ format: "date-time" }))),
-        location: t.Optional(t.Nullable(t.String())),
-        notes: t.Optional(t.Nullable(t.String())),
+        location: t.Optional(t.Nullable(t.String({ maxLength: 200 }))),
+        notes: t.Optional(t.Nullable(t.String({ maxLength: 2000 }))),
       }),
     },
   )
@@ -234,7 +234,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       return { deleted: true };
     },
     {
-      isOrgOwner: true,
+      isCoach: true,
       params: t.Object({
         organizationId: t.String(),
         gameId: t.String(),

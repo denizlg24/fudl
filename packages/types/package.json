@@ -15,10 +15,28 @@
       "types": "./src/analysis.ts",
       "import": "./src/analysis.ts",
       "default": "./src/analysis.ts"
+    },
+    "./roles": {
+      "types": "./src/roles.ts",
+      "import": "./src/roles.ts",
+      "default": "./src/roles.ts"
+    },
+    "./profile": {
+      "types": "./src/profile.ts",
+      "import": "./src/profile.ts",
+      "default": "./src/profile.ts"
+    },
+    "./validations": {
+      "types": "./src/validations.ts",
+      "import": "./src/validations.ts",
+      "default": "./src/validations.ts"
     }
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "zod": "^4.3.4"
   }
 }
