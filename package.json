@@ -4,6 +4,7 @@
   "scripts": {
     "build": "dotenv -- turbo run build",
     "dev": "bun run docker:up && bun run redis:flush && dotenv -- turbo run dev",
+    "web:dev": "dotenv -- turbo run dev --filter ./apps/api --filter ./apps/web",
     "start": "bun run docker:up && dotenv -- turbo run start",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",

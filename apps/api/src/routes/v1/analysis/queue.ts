@@ -1,6 +1,6 @@
 /**
  * Video Analysis Queue
- * BullMQ queue for processing video analysis jobs
+ * Redis queue for processing video analysis jobs
  */
 
 import { Queue, QueueEvents } from "bullmq";
