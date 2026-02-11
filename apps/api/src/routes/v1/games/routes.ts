@@ -56,22 +56,40 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
         },
       });
 
-      // Flatten tags and generate presigned thumbnail URLs
-      const gamesWithTags = await Promise.all(
-        games.map(async (game) => ({
-          ...game,
-          tags: game.tags.map((entry) => entry.tag),
-          videos: await Promise.all(
-            game.videos.map(async (video) => ({
-              id: video.id,
-              status: video.status,
-              thumbnailUrl: video.thumbnailKey
-                ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
-                : (video.thumbnailUrl ?? null),
-            })),
-          ),
+      // Collect all unique thumbnail keys across all games' videos,
+      // sign them in a single batch, then map results back. This avoids
+      // N+1 per-video signing calls that would dominate response time.
+      const thumbnailKeys = new Set<string>();
+      for (const game of games) {
+        for (const video of game.videos) {
+          if (video.thumbnailKey) {
+            thumbnailKeys.add(video.thumbnailKey);
+          }
+        }
+      }
+
+      const signedUrlMap = new Map<string, string>();
+      if (thumbnailKeys.size > 0) {
+        const entries = Array.from(thumbnailKeys);
+        const signedUrls = await Promise.all(
+          entries.map((key) => getSignedDownloadUrl(key, 3600)),
+        );
+        for (let i = 0; i < entries.length; i++) {
+          signedUrlMap.set(entries[i], signedUrls[i]);
+        }
+      }
+
+      const gamesWithTags = games.map((game) => ({
+        ...game,
+        tags: game.tags.map((entry) => entry.tag),
+        videos: game.videos.map((video) => ({
+          id: video.id,
+          status: video.status,
+          thumbnailUrl: video.thumbnailKey
+            ? (signedUrlMap.get(video.thumbnailKey) ?? null)
+            : (video.thumbnailUrl ?? null),
         })),
-      );
+      }));
 
       return { games: gamesWithTags };
     },
@@ -156,7 +174,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       body: t.Object({
         title: t.String({ minLength: 1, maxLength: 200 }),
         seasonId: t.String({ minLength: 1 }),
-        date: t.Optional(t.String()),
+        date: t.Optional(t.String({ format: "date" })),
         location: t.Optional(t.String({ maxLength: 200 })),
         notes: t.Optional(t.String({ maxLength: 2000 })),
         tagIds: t.Optional(t.Array(t.String())),
@@ -304,7 +322,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       body: t.Object({
         title: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
         seasonId: t.Optional(t.String({ minLength: 1 })),
-        date: t.Optional(t.Nullable(t.String())),
+        date: t.Optional(t.Nullable(t.String({ format: "date" }))),
         location: t.Optional(t.Nullable(t.String({ maxLength: 200 }))),
         notes: t.Optional(t.Nullable(t.String({ maxLength: 2000 }))),
         tagIds: t.Optional(t.Array(t.String())),

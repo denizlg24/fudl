@@ -223,12 +223,13 @@ export const uploadRoutes = new Elysia({
         throw new ApiError(404, "No active upload session for this video");
       }
 
-      // Calculate bytes uploaded for this part
+      // Calculate bytes uploaded for this part using BigInt to avoid
+      // precision loss for large files (Number can lose precision > 2^53).
       const isLastPart = body.partNumber === session.totalParts;
       const partBytes = isLastPart
-        ? Number(session.totalBytes) -
-          (session.totalParts - 1) * session.partSize
-        : session.partSize;
+        ? session.totalBytes -
+          BigInt(session.totalParts - 1) * BigInt(session.partSize)
+        : BigInt(session.partSize);
 
       // Use a serializable interactive transaction to atomically append
       // the completed part to the JSON array. Serializable isolation
@@ -279,7 +280,7 @@ export const uploadRoutes = new Elysia({
                 where: { videoId },
                 data: {
                   completedParts: updatedParts,
-                  uploadedBytes: { increment: BigInt(partBytes) },
+                  uploadedBytes: { increment: partBytes },
                 },
               });
 

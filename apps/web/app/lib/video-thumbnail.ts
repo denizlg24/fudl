@@ -37,30 +37,42 @@ export async function extractVideoThumbnail(
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     const objectUrl = URL.createObjectURL(file);
+    let settled = false;
 
-    // Cleanup helper
+    // Cleanup helper — removes all listeners and releases resources
     const cleanup = () => {
+      video.removeEventListener("error", onError);
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      video.removeEventListener("seeked", onSeeked);
       video.removeAttribute("src");
       video.load();
       URL.revokeObjectURL(objectUrl);
     };
 
-    video.preload = "metadata";
-    video.muted = true;
-    // Required for cross-origin videos (shouldn't apply for local files, but be safe)
-    video.crossOrigin = "anonymous";
-    video.src = objectUrl;
-
-    video.addEventListener("error", () => {
+    // Guard against multiple resolve/reject calls (seeked can fire more
+    // than once in some browsers)
+    const safeReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      reject(new Error("Failed to load video for thumbnail extraction"));
-    });
+      reject(err);
+    };
 
-    video.addEventListener("loadedmetadata", () => {
+    const safeResolve = (result: ThumbnailResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const onError = () => {
+      safeReject(new Error("Failed to load video for thumbnail extraction"));
+    };
+
+    const onLoadedMetadata = () => {
       const duration = video.duration;
       if (!duration || !isFinite(duration)) {
-        cleanup();
-        reject(new Error("Could not determine video duration"));
+        safeReject(new Error("Could not determine video duration"));
         return;
       }
 
@@ -68,15 +80,15 @@ export async function extractVideoThumbnail(
       const targetTime =
         seekTime ?? Math.min(DEFAULT_SEEK_TIME, duration * 0.1);
       video.currentTime = Math.min(targetTime, duration);
-    });
+    };
 
-    video.addEventListener("seeked", () => {
+    const onSeeked = () => {
+      if (settled) return;
       try {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          cleanup();
-          reject(new Error("Failed to get canvas 2D context"));
+          safeReject(new Error("Failed to get canvas 2D context"));
           return;
         }
 
@@ -96,21 +108,29 @@ export async function extractVideoThumbnail(
 
         canvas.toBlob(
           (blob) => {
-            cleanup();
             if (!blob) {
-              reject(new Error("Failed to generate thumbnail blob"));
+              safeReject(new Error("Failed to generate thumbnail blob"));
               return;
             }
             const url = URL.createObjectURL(blob);
-            resolve({ url, blob, width, height });
+            safeResolve({ url, blob, width, height });
           },
           "image/jpeg",
           JPEG_QUALITY,
         );
       } catch (err) {
-        cleanup();
-        reject(err);
+        safeReject(err instanceof Error ? err : new Error(String(err)));
       }
-    });
+    };
+
+    video.preload = "metadata";
+    video.muted = true;
+    // Required for cross-origin videos (shouldn't apply for local files, but be safe)
+    video.crossOrigin = "anonymous";
+    video.src = objectUrl;
+
+    video.addEventListener("error", onError, { once: true });
+    video.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
+    video.addEventListener("seeked", onSeeked, { once: true });
   });
 }

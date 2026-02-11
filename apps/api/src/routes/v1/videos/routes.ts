@@ -60,15 +60,33 @@ export const videoRoutes = new Elysia({
         },
       });
 
-      const videosWithTags = await Promise.all(
-        videos.map(async (video) => ({
-          ...video,
-          tags: video.tags.map((entry) => entry.tag),
-          thumbnailUrl: video.thumbnailKey
-            ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
-            : video.thumbnailUrl,
-        })),
-      );
+      // Batch-sign all thumbnail keys in a single Promise.all to avoid
+      // N+1 per-video signing calls that dominate response time.
+      const thumbnailKeys = new Set<string>();
+      for (const video of videos) {
+        if (video.thumbnailKey) {
+          thumbnailKeys.add(video.thumbnailKey);
+        }
+      }
+
+      const signedUrlMap = new Map<string, string>();
+      if (thumbnailKeys.size > 0) {
+        const entries = Array.from(thumbnailKeys);
+        const signedUrls = await Promise.all(
+          entries.map((key) => getSignedDownloadUrl(key, 3600)),
+        );
+        for (let i = 0; i < entries.length; i++) {
+          signedUrlMap.set(entries[i], signedUrls[i]);
+        }
+      }
+
+      const videosWithTags = videos.map((video) => ({
+        ...video,
+        tags: video.tags.map((entry) => entry.tag),
+        thumbnailUrl: video.thumbnailKey
+          ? (signedUrlMap.get(video.thumbnailKey) ?? null)
+          : video.thumbnailUrl,
+      }));
 
       return { videos: videosWithTags };
     },

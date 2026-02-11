@@ -93,6 +93,49 @@ export function TagCombobox({
     }
   }, [orgId, category]);
 
+  // Eagerly load tags when there are selected IDs so selected tag labels
+  // render in the trigger even before the popover is opened.
+  useEffect(() => {
+    if (!orgId || selectedTagIds.length === 0 || tags.length > 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadTagsForSelection = async () => {
+      try {
+        const res = await fetch(
+          `${API_URL}/orgs/${orgId}/tags?category=${encodeURIComponent(category)}`,
+          { method: "GET", credentials: "include" },
+        );
+        if (!res.ok || cancelled) return;
+
+        const data = await res.json();
+        const fetchedTags = Array.isArray(data?.tags) ? data.tags : [];
+        if (cancelled || fetchedTags.length === 0) return;
+
+        setTags((prev) => {
+          // If tags were populated while we were fetching, don't overwrite them.
+          if (prev.length > 0) return prev;
+          return [...fetchedTags].sort((a: TagOption, b: TagOption) =>
+            a.name.localeCompare(b.name),
+          );
+        });
+        // Mark as fetched so the popover-open fetch doesn't re-run
+        fetchedRef.current = true;
+      } catch {
+        // Silently ignore; selected labels just won't render until the
+        // popover is opened.
+      }
+    };
+
+    void loadTagsForSelection();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId, category, selectedTagIds.length, tags.length]);
+
   useEffect(() => {
     if (open && !fetchedRef.current) {
       fetchedRef.current = true;

@@ -6,8 +6,11 @@
  * Provides:
  * - Global upload state accessible from any component
  * - Persistent tracking across page navigation (state lives in context, not per-page)
- * - localStorage persistence of active video IDs for resume on reload
  * - Integration with the UploadManager singleton
+ *
+ * Note: localStorage is used to store active upload IDs for diagnostic purposes
+ * only. Upload state is not restored from localStorage on reload — resuming
+ * interrupted uploads requires calling the /upload/status API endpoint.
  */
 
 import {
