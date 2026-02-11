@@ -4,13 +4,19 @@ import { config } from "./config";
 import { errorHandler } from "./middleware";
 import { v1Routes } from "./routes";
 
+// Enable BigInt JSON serialization (Prisma returns BigInt for large integer columns)
+// biome-ignore lint/suspicious/noGlobalAssign: Required for JSON.stringify compatibility
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+  return this.toString();
+};
+
 const app = new Elysia()
   .use(errorHandler)
   .use(
     cors({
       origin: config.cors.origins,
       credentials: config.cors.credentials,
-    })
+    }),
   )
 
   .get("/", () => ({
@@ -24,7 +30,7 @@ const app = new Elysia()
   .listen(config.port);
 
 console.log(
-  `API running at http://localhost:${app.server?.port} [${config.env}]`
+  `API running at http://localhost:${app.server?.port} [${config.env}]`,
 );
 
 export type App = typeof app;

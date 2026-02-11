@@ -109,8 +109,8 @@ The goal of FUDL is to provide coaches and players with:
 - Health check endpoints (ready/live)
 - SSE endpoint for real-time job streaming
 - Docker setup for Redis
-- **Prisma schema with auth + org + domain models (11 tables):** User, Session, Account, Verification, Organization, Member, Invitation, InviteLink, Season, Game, Video
-- **Domain models (lean):** Season, Game, Video with `VideoStatus` enum (PENDING → UPLOADING → UPLOADED → PROCESSING → COMPLETED → FAILED)
+- **Prisma schema with auth + org + domain models (14 tables):** User, Session, Account, Verification, Organization, Member, Invitation, InviteLink, Season, Game, Video, Tag, TagsOnGames, TagsOnVideos
+- **Domain models (lean):** Season, Game, Video with `VideoStatus` enum (PENDING → UPLOADING → UPLOADED → PROCESSING → COMPLETED → FAILED); Tag with `TagCategory` enum (OPPONENT, FIELD, CAMERA_ANGLE, GENERAL)
 - Zod-validated environment variables across all packages (including `RESEND_API_KEY`, `EMAIL_FROM`); auth env uses lazy `createEnv` proxy to prevent import-time crashes
 - Sonner toast notifications in root layout
 - react-hook-form + zod validation on all forms (login, register, setup, invite)
@@ -135,15 +135,35 @@ The goal of FUDL is to provide coaches and players with:
 - **No-team empty states** — Org-dependent pages (Seasons, Roster, Team Settings) show a shared `<NoTeamState>` component instead of rendering blank or redirecting. Directs users to the dashboard to create or join a team.
 - **Nav bar org-awareness** — Seasons and Roster nav links are hidden when user has no active org. Team settings link in dropdown is conditionally rendered.
 - **Ownership transfer** — Team owners can transfer ownership to any non-owner member via Team Settings. Two-step process: promotes target to owner, demotes self to coach. AlertDialog confirmation. Profile settings danger zone links to Team Settings when sole-owner block is active.
+- **Video upload system (full stack)** — S3 multipart upload with chunking, 4-concurrent-part uploads, retry with exponential backoff, resume support, cancel/abort. Backend: `UploadSession` model, 6 upload API endpoints (init, sign-part, complete-part, complete, abort, status), S3 helpers, BullMQ `video-processing` queue. Frontend: `UploadManager` class, `UploadStoreProvider` context with `useSyncExternalStore`, `extractVideoThumbnail` utility, upload page with 3-step flow (select files, game info, uploading), floating `UploadIndicator` widget.
+- **Upload page** — `/upload` with drag-and-drop file selection, client-side thumbnail extraction, game creation or existing game selection, per-file upload progress. Coach-only access.
+- **Nav bar Upload link** — Coach-only "Upload" link in the nav bar, visible when user has an active org and is a coach.
+- **Dashboard upload integration** — All "Video upload coming soon" toast stubs replaced with actual navigation to `/upload` (header button, game card dropdown, empty state buttons, inline "Upload" links in no-footage game rows).
+- **Games API includes videos relation** — `GET /orgs/:orgId/games` now returns `videos: [{ id, status, thumbnailUrl }]` alongside `_count`, so the dashboard can display footage status per game.
+- **Dashboard auto-refresh after upload** — Dashboard detects when active upload count drops to 0 and re-fetches games from the API. Also syncs with server-rendered `initialGames` on navigation.
+- **Upload indicator action buttons** — Per-entry cancel (active uploads), retry (failed uploads), and dismiss (completed/failed/cancelled) buttons. Global "clear all" when no uploads are active. Tooltips on all actions. No nested `<button>` elements (uses `<div role="button">`).
+- **Upload store retry support** — `UploadEntry` stores the `File` reference. `retryUpload(videoId)` method re-invokes the upload manager with the stored file. Exposed via `useUploadActions()` hook.
+- **Video status interim fix** — Upload `/complete` endpoint keeps video status as `UPLOADED` instead of transitioning to `PROCESSING`. The worker will handle the `UPLOADED` -> `PROCESSING` -> `COMPLETED` transitions when implemented.
+- **Tag system (full stack)** — Categorized, org-scoped tags with `TagCategory` enum (`OPPONENT`, `FIELD`, `CAMERA_ANGLE`, `GENERAL`). `Tag` model with unique `[organizationId, category, name]` constraint. `TagsOnGames` and `TagsOnVideos` join tables for many-to-many relationships. API CRUD routes (`GET/POST/DELETE /orgs/:orgId/tags`) with lazy auto-seeding of default camera angle tags per org. Game and Video API routes accept `tagIds` on create/update with org validation. Tags flattened in all API responses. Old `opponent` field removed from Game model — opponents are now tags with `category=OPPONENT`.
+- **TagCombobox component** — Reusable `Popover` + `Command` combobox for tag selection. Supports single and multi-select modes, lazy loading on popover open, create-on-fly for new tags, badge display for multi-select with remove buttons. Used across upload form for opponent, field, general tags, and per-video camera angles.
+- **Upload form tag integration** — Upload form step 2 includes `TagCombobox` for opponent (single), field/location (single), general tags (multi), and per-video camera angle (single). Tag IDs passed to game and video create API calls. `GameOption` updated to use `tags[]` instead of `opponent` string.
+- **Dashboard tag integration** — `GameData` interface updated to use `tags[]` instead of `opponent`. `GameCard` displays opponent tag name via `getOpponentName()` helper, falls back to game `title`. Delete confirmation dialog references opponent tag or title.
+- **Upload race condition fix** — `/complete-part` endpoint uses a Prisma interactive transaction with `Serializable` isolation level and retry logic (up to 3 attempts with random backoff for `P2034` serialization conflicts). Ensures ACID properties for concurrent part uploads without raw SQL.
+- **Games require a season (`seasonId` non-nullable)** — `Game.seasonId` changed from `String?` to `String`, `onDelete: Restrict`. Validation schemas updated. Upload form always requires season selection. Season deletion restricted when games exist. Dashboard `GameData.seasonId` is `string` (not nullable).
+- **Thumbnail upload to S3** — New `uploadThumbnail()` helper in `apps/api/src/lib/s3.ts` using `PutObjectCommand`. New `POST /orgs/:orgId/videos/:videoId/upload/thumbnail` endpoint accepts file upload (JPEG/PNG/WebP, max 5MB), stores to S3 at `orgs/{orgId}/videos/{videoId}/thumbnail.jpg`, updates `thumbnailUrl`/`thumbnailKey` on Video record. Frontend fires thumbnail upload as fire-and-forget after video upload completes.
+- **Next.js Image S3 support** — `apps/web/next.config.ts` has `images.remotePatterns` for `*.s3.*.amazonaws.com` and `*.s3.amazonaws.com` to allow `<Image>` component to render S3-hosted thumbnails.
+- **Dashboard game grouping** — "Group by" `<Select>` dropdown with 4 options: No grouping, By season, By opponent, Season + opponent. Client-side `groupGames()` function with `GameGroup` interface, memoized via `useMemo`. Section headers with group label, game count badge, and divider line. "Both" mode groups by season first, then opponent within each season.
+- **Game deletion cleans up S3 objects** — Game DELETE handler finds all associated videos, deletes their S3 objects via `deletePrefix()`, aborts in-progress multipart uploads, deletes upload sessions, then deletes all video records and the game in a Prisma batch transaction. No orphaned S3 objects or video records after game deletion.
+- **Thumbnail upload fix** — Replaced Elysia's `t.File()` body parsing with manual `request.formData()` for thumbnail upload endpoint. Fixed silent error swallowing in frontend thumbnail fetch (now checks `res.ok` and logs errors). Fixed `retryUpload()` to include `onComplete` and `onError` callbacks.
+- **Presigned URLs for S3 thumbnails** — Thumbnail upload stores only the S3 key (not a public URL). Games and Videos API endpoints generate 1-hour presigned download URLs via `getSignedDownloadUrl()` when serving responses. No S3 bucket ACL or policy changes needed.
 
 ### Placeholder / Incomplete
 
 - `process_video()` in Python worker is a stub (returns empty results after 2s sleep)
 - `video_frame.py` has incomplete OpenCV frame extraction
 - No ML models for route detection implemented
-- No file/video upload infrastructure (S3, cloud storage)
 - No actual analytics dashboards or visualizations
-- No web pages for games or videos (game detail, video upload, etc.)
+- No web pages for games or videos (game detail, video detail, etc.)
 - No season detail page (`/seasons/:seasonId` — clicking a season row navigates there but the page doesn't exist yet)
 - Design specs written for home page, team settings, and profile settings (see `designs/` directory) — not yet implemented
 - `@repo/ui` has `chart.tsx` and `resizable.tsx` commented out (recharts v3 and react-resizable-panels v4 type incompatibilities)
@@ -396,7 +416,7 @@ These skills are installed but designed for different project architectures. Use
 ### Phase 1: Domain Foundation
 
 - [x] Design and implement domain database models (Video, Game, Season — lean, extensible)
-- [ ] Build video upload flow (file upload endpoint, cloud storage integration — S3 or similar)
+- [x] Build video upload flow (file upload endpoint, cloud storage integration — S3 or similar)
 - [x] Create API routes for domain models (Season, Game, Video CRUD)
 - [ ] Create video management pages (list, detail, delete)
 - [ ] Migrate web app job status from polling to SSE
@@ -1076,6 +1096,409 @@ This ensures continuity across sessions and prevents redundant work.
 
 - `apps/web/app/(authenticated)/settings/team/team-content.tsx` — Added transfer ownership action with AlertDialog
 - `apps/web/app/(authenticated)/settings/profile/profile-content.tsx` — Added Team Settings link in sole-owner warning
+- `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 18 — 2026-02-11
+
+**Focus:** Wire up video upload frontend — nav bar, layout, and dashboard integration
+
+**Completed:**
+
+1. **Nav bar Upload link** — `apps/web/app/(authenticated)/components/nav-bar.tsx`:
+   - Added `coachOnly?: boolean` field to `NAV_LINKS` type
+   - Added `{ href: "/upload", label: "Upload", requiresOrg: true, coachOnly: true }` entry
+   - `NavLinks` component now accepts a `role: string | null` prop
+   - Coach-only links filtered out for non-coach users via `isCoachRole()` from `@repo/types`
+   - `NavBarProps` interface extended with `role: string | null`
+
+2. **Authenticated layout** — `apps/web/app/(authenticated)/layout.tsx`:
+   - Added `getActiveMember()` to the parallel fetch alongside `getServerOrg()` and `listUserOrgs()`
+   - Extracts `role` from active member and passes to `<NavBar>`
+   - Wraps children with `<UploadStoreProvider>` for global upload state
+   - Renders `<UploadIndicator>` floating widget inside the provider
+
+3. **Dashboard upload integration** — `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx`:
+   - Replaced all `toast.info("Video upload coming soon.")` stubs with actual navigation:
+     - Header "Upload video" button → `router.push("/upload")`
+     - GameCard dropdown "Upload video" → `router.push("/upload?gameId=${game.id}")`
+     - Empty state "Upload video" button → `router.push("/upload")`
+     - Empty state "Create a game" button → `router.push("/upload")`
+   - `VideoStatusLine` "Upload" inline link (no-footage games) → `<Link href="/upload?gameId=${gameId}">` with `stopPropagation` to prevent game card click
+   - Added `gameId` prop to `VideoStatusLine` component
+   - Added `Link` import from `next/link`
+
+**Files modified:**
+
+- `apps/web/app/(authenticated)/components/nav-bar.tsx` — Added Upload link, role prop, coach-only filtering
+- `apps/web/app/(authenticated)/layout.tsx` — UploadStoreProvider, UploadIndicator, role prop
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx` — Replaced toast stubs with upload navigation
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 19 — 2026-02-11
+
+**Focus:** Fix remaining upload flow bugs — games API, dashboard refresh, video status, upload indicator actions
+
+**Completed:**
+
+1. **Games API includes videos relation** — `apps/api/src/routes/v1/games/routes.ts`:
+   - `GET /orgs/:orgId/games` now includes `videos: { select: { id: true, status: true, thumbnailUrl: true }, orderBy: { createdAt: "desc" } }` alongside the existing `_count`
+   - Dashboard can now display footage status, thumbnails, and clip counts per game
+
+2. **Dashboard auto-refresh after upload** — `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx`:
+   - Added `reloadGames()` function that re-fetches games from the API client-side
+   - Added `useActiveUploadCount()` hook from upload store to detect when uploads finish
+   - Uses `useRef` to track previous active count — when it transitions from >0 to 0, triggers `reloadGames()`
+   - Also syncs with server-rendered `initialGames` via `useEffect` so `router.refresh()` propagates
+
+3. **Video status interim fix** — `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Upload `/complete` endpoint now keeps video status as `UPLOADED` instead of transitioning to `PROCESSING`
+   - Still queues the BullMQ job and stores the `jobId` on the video record
+   - The worker will handle `UPLOADED` -> `PROCESSING` -> `COMPLETED` transitions when implemented
+   - This prevents videos from being permanently stuck in `PROCESSING` with the stub worker
+
+4. **Upload store retry support** — `apps/web/app/lib/upload-store.tsx`:
+   - `UploadEntry` now includes a `file: File` field storing the original file reference
+   - `startUpload()` stores the file immediately on the entry before invoking the upload manager
+   - `updateProgress()` preserves the existing file reference when updating progress
+   - Added `retryUpload(videoId)` method: retrieves stored file, re-invokes `uploadManager.upload()` with resume support
+   - Exposed `retryUpload` via `useUploadActions()` hook
+
+5. **Upload indicator action buttons** — `apps/web/app/(authenticated)/components/upload-indicator.tsx`:
+   - **Cancel** button on active uploads (uploading/initializing/completing) — calls `cancelUpload(orgId, videoId)`
+   - **Retry** button on failed uploads — calls `retryUpload(videoId)` with stored file reference
+   - **Dismiss** button on completed/failed/cancelled entries — calls `dismissUpload(videoId)`
+   - **Clear all** button in header — visible when no uploads are active, dismisses all entries
+   - All action buttons use `<div role="button">` via `RowAction` component to avoid nested `<button>` hydration warnings
+   - Tooltips on all actions via `@repo/ui/components/tooltip`
+   - Status icons: `Check` (completed), `AlertCircle` (failed), `Ban` (cancelled), percentage (active)
+
+**Key decisions:**
+
+- **`UPLOADED` not `PROCESSING` after upload** — Since the Python worker is a stub, setting status to `PROCESSING` creates a permanently stuck state. `UPLOADED` is the correct intermediate status — the dashboard's `VideoStatusLine` handles it naturally (shows clip count without "AI analysis complete" badge).
+- **File reference in UploadEntry** — Storing `File` in the store is just a JS object reference (not a copy of file data). This enables retry without asking the user to re-select the file. The reference persists as long as the upload entry exists.
+- **`useRef` for previous count tracking** — Avoids the `useEffect` pitfall of using state for previous value tracking, which would cause unnecessary re-renders.
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/games/routes.ts` — Added `videos` relation to list query
+- `apps/api/src/routes/v1/uploads/routes.ts` — Changed `/complete` to keep status as `UPLOADED`
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx` — Added auto-refresh after uploads, initialGames sync
+- `apps/web/app/lib/upload-store.tsx` — Added `file` to UploadEntry, `retryUpload` method, exposed in hook
+- `apps/web/app/(authenticated)/components/upload-indicator.tsx` — Added per-entry action buttons (cancel, retry, dismiss), tooltips
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 20 — 2026-02-11
+
+**Focus:** Tag system — full-stack categorized tagging for games and videos
+
+**Completed:**
+
+1. **Database schema** — Added `TagCategory` enum (`OPPONENT`, `FIELD`, `CAMERA_ANGLE`, `GENERAL`), `Tag` model with unique `[organizationId, category, name]` constraint, `TagsOnGames` and `TagsOnVideos` join tables. Removed `opponent` field from `Game` model. Schema pushed via `prisma db push`.
+
+2. **Tag API routes** — `apps/api/src/routes/v1/tags/routes.ts`:
+   - `GET /orgs/:orgId/tags?category=X` — List/search with lazy auto-seeding of default camera angle tags per org
+   - `POST /orgs/:orgId/tags` — Create (idempotent: returns existing if name+category+org already exists)
+   - `DELETE /orgs/:orgId/tags/:tagId` — Delete with cascade to join tables
+
+3. **Game & Video API updates** — Both routes now accept `tagIds` on create/update, validate tag org ownership, include tags in all responses (flattened from join tables via `.map(entry => entry.tag)`).
+
+4. **Validation schema updates** — `packages/types/src/validations.ts`: Removed `opponent` from game schemas, added `tagIds: z.array(z.string()).optional()` to game and video schemas.
+
+5. **TagCombobox component** — `apps/web/app/(authenticated)/components/tag-combobox.tsx`:
+   - Composes `Popover` + `Command` from `@repo/ui`
+   - Fetches tags on popover open (lazy loading), filtered by category
+   - "Create [query]" option when search has no exact match
+   - Multi-select mode with badges + remove buttons, single-select mode with auto-close
+
+6. **Upload form tag integration** — `upload-content.tsx`:
+   - Opponent (single), field/location (single), general tags (multi) via `TagCombobox`
+   - Per-video camera angle (single) via `TagCombobox`
+   - Tag IDs passed to game and video create API calls
+   - `GameOption` updated to use `tags[]` instead of `opponent`
+
+7. **Dashboard tag integration** — `dashboard-content.tsx`:
+   - `GameData` interface: removed `opponent`, added `title` and `tags: TagData[]`
+   - `getOpponentName()` helper finds `OPPONENT` category tag
+   - `GameCard` shows `vs. {opponent}` or falls back to `game.title`
+   - Delete confirmation dialog references opponent tag or game title
+
+8. **Fixed spread type error** — `apps/api/src/routes/v1/tags/routes.ts`: Replaced `...(query.category && { category })` spread (which TypeScript rejects for union types) with explicit `where` object construction.
+
+**Key decisions:**
+
+- **`opponent` field removed** — Opponents are now tags with `category=OPPONENT`. This unifies the tagging model and enables reuse (same opponent across multiple games without string typos).
+- **Camera angles are per-video** — Different clips of the same game can have different angles, so camera angle tags attach to `TagsOnVideos`, not `TagsOnGames`.
+- **Lazy auto-seeding** — Default camera angle tags (Front View, Side View, End Zone, Press Box, Aerial/Drone) are created per-org on first `GET /tags` call that includes `CAMERA_ANGLE` category.
+- **Idempotent tag creation** — `POST /tags` with an existing name+category+org returns the existing tag instead of erroring. This simplifies the "create on fly" UX in the combobox.
+
+**Files created:**
+
+- `apps/api/src/routes/v1/tags/routes.ts`
+- `apps/api/src/routes/v1/tags/index.ts`
+- `apps/web/app/(authenticated)/components/tag-combobox.tsx`
+
+**Files modified:**
+
+- `packages/db/prisma/schema.prisma` — Added Tag, TagsOnGames, TagsOnVideos models; removed `opponent` from Game
+- `apps/api/src/routes/v1/index.ts` — Wired tagRoutes
+- `apps/api/src/routes/v1/games/routes.ts` — Removed opponent, added tagIds, includes tags
+- `apps/api/src/routes/v1/videos/routes.ts` — Added tagIds, includes tags
+- `packages/types/src/validations.ts` — Removed opponent, added tagIds to game/video schemas
+- `apps/web/app/(authenticated)/upload/upload-content.tsx` — Tag comboboxes for all categories
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx` — GameData interface + GameCard tag display
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 21 — 2026-02-11
+
+**Focus:** Tag system (full stack), upload race condition fix, games require season (seasonId non-nullable)
+
+**Completed:**
+
+1. **Tag system — database schema** — Added `TagCategory` enum (`OPPONENT`, `FIELD`, `CAMERA_ANGLE`, `GENERAL`), `Tag` model with unique `[organizationId, category, name]` constraint, `TagsOnGames` and `TagsOnVideos` join tables. Removed `opponent` field from `Game` model. Schema pushed via `prisma db push`.
+
+2. **Tag API routes** — `apps/api/src/routes/v1/tags/routes.ts`:
+   - `GET /orgs/:orgId/tags?category=X` — List/search with lazy auto-seeding of default camera angle tags per org
+   - `POST /orgs/:orgId/tags` — Create (idempotent: returns existing if name+category+org already exists)
+   - `DELETE /orgs/:orgId/tags/:tagId` — Delete with cascade to join tables
+
+3. **Game & Video API updates** — Both routes now accept `tagIds` on create/update, validate tag org ownership, include tags in all responses (flattened from join tables via `.map(entry => entry.tag)`). Removed `opponent` from game routes.
+
+4. **Validation schema updates** — `packages/types/src/validations.ts`: Removed `opponent` from game schemas, added `tagIds: z.array(z.string()).optional()` to game and video schemas.
+
+5. **TagCombobox component** — `apps/web/app/(authenticated)/components/tag-combobox.tsx`: Reusable `Popover` + `Command` combobox for tag selection. Supports single and multi-select modes, lazy loading on popover open, create-on-fly for new tags, badge display for multi-select with remove buttons.
+
+6. **Upload form tag integration** — Upload form step 2 includes `TagCombobox` for opponent (single), field/location (single), general tags (multi), and per-video camera angle (single). Tag IDs passed to game and video create API calls. `GameOption` updated to use `tags[]` instead of `opponent` string.
+
+7. **Dashboard tag integration** — `GameData` interface updated to use `tags[]` instead of `opponent`. `GameCard` displays opponent tag name via `getOpponentName()` helper, falls back to game `title`. Delete confirmation dialog references opponent tag or title.
+
+8. **Upload race condition fix** — `/complete-part` endpoint in `apps/api/src/routes/v1/uploads/routes.ts` replaced Prisma `$transaction` read-modify-write with raw SQL atomic `jsonb` array append (`UPDATE ... SET "completedParts" = "completedParts" || ...::jsonb`) with a `NOT ... @> ...` idempotency check. Prevents concurrent part uploads from overwriting each other.
+
+9. **Games require a season (`seasonId` non-nullable)** — Full-stack change:
+   - Schema: `Game.seasonId` changed from `String?` to `String`, `onDelete: Restrict`. Pushed via `prisma db push --force-reset`.
+   - Validation schemas: `createGameSchema.seasonId` is now required (`z.string().min(1, "Season is required")`).
+   - Game API POST: `seasonId` is required, always validated against org.
+   - Season API DELETE: Added restrict-delete logic — returns 400 if season has games.
+   - Dashboard: `GameData.seasonId` changed from `string | null` to `string`.
+   - Upload form: Season field always shown, "Start upload" button disabled when no seasons exist. Removed "No season" option.
+   - Seasons page: Delete button disabled when season has games, confirmation dialog text is dynamic.
+
+**Key decisions:**
+
+- **`opponent` replaced by tag** — Opponents are now tags with `category=OPPONENT`. Unifies tagging model, enables reuse across games without string typos.
+- **Camera angles are per-video** — Different clips of the same game can have different angles, so camera angle tags attach to `TagsOnVideos`, not `TagsOnGames`.
+- **Lazy auto-seeding** — Default camera angle tags (Front View, Side View, End Zone, Press Box, Aerial/Drone) created per-org on first `GET /tags` call with `CAMERA_ANGLE` category.
+- **Idempotent tag creation** — `POST /tags` with existing name+category+org returns the existing tag. Simplifies "create on fly" UX.
+- **Raw SQL for race condition** — Prisma `$transaction` with read-modify-write is not atomic for JSON array appends under concurrency. Raw SQL `||` operator with `@>` idempotency check is the correct approach.
+- **`onDelete: Restrict` for Season→Game** — Prevents accidental data loss. Users must move/delete games before deleting a season.
+- **`prisma db push --force-reset`** — Required because making `seasonId` non-nullable fails with existing NULL values. Acceptable in dev (all data is lost).
+
+**Key learnings:**
+
+- **Elysia `t` name collision** — When mapping over arrays in Elysia route handlers, the callback parameter cannot be named `t` because it shadows Elysia's `t` import (typebox). Use `entry` instead.
+- **TypeScript spread type error with unions** — `...(condition && { key: value })` fails when the conditional expression produces a union type. Use explicit `if` statement with object mutation instead.
+- **Prisma `db push` limitations** — Making a nullable column non-nullable requires `--force-reset` (drops and recreates DB) when existing NULL values exist. `--accept-data-loss` is not sufficient.
+
+**Files created:**
+
+- `apps/api/src/routes/v1/tags/routes.ts`
+- `apps/api/src/routes/v1/tags/index.ts`
+- `apps/web/app/(authenticated)/components/tag-combobox.tsx`
+
+**Files modified:**
+
+- `packages/db/prisma/schema.prisma` — Added Tag system models, removed `opponent` from Game, made `seasonId` non-nullable with `onDelete: Restrict`
+- `apps/api/src/routes/v1/index.ts` — Wired tagRoutes
+- `apps/api/src/routes/v1/games/routes.ts` — Removed opponent, added tagIds, includes tags, seasonId required
+- `apps/api/src/routes/v1/videos/routes.ts` — Added tagIds, includes tags
+- `apps/api/src/routes/v1/uploads/routes.ts` — Fixed race condition in complete-part with raw SQL
+- `apps/api/src/routes/v1/seasons/routes.ts` — Added restrict-delete logic
+- `packages/types/src/validations.ts` — Removed opponent, added tagIds, made seasonId required
+- `apps/web/app/(authenticated)/upload/upload-content.tsx` — Tag comboboxes for all categories, season required
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx` — GameData uses tags[], seasonId non-nullable
+- `apps/web/app/(authenticated)/seasons/seasons-content.tsx` — Restrict-delete UX
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 22 — 2026-02-11
+
+**Focus:** Replace raw SQL with Prisma transaction for upload race condition, create proper migration for tag system
+
+**Completed:**
+
+1. **Replaced raw SQL with Prisma interactive transaction** — `apps/api/src/routes/v1/uploads/routes.ts` `/complete-part` endpoint:
+   - Removed raw SQL `$executeRaw` with `jsonb` array append
+   - Replaced with Prisma `$transaction()` using `Serializable` isolation level
+   - Transaction reads current `completedParts`, checks idempotency (part already recorded?), appends the new part, and updates `uploadedBytes` atomically
+   - Retry logic: up to 3 attempts for `P2034` serialization conflicts with random exponential backoff (`Math.random() * 50 * attempt` ms)
+   - `maxWait: 5000` (wait for transaction slot), `timeout: 10000` (transaction timeout)
+   - Ensures ACID properties without bypassing Prisma's type safety
+
+2. **Created proper migration for tag system + seasonId changes** — `packages/db/prisma/migrations/20260211180000_tag_system_and_season_required/migration.sql`:
+   - Previously these schema changes were applied via `prisma db push --force-reset` without migration files
+   - Resolved migration history drift: marked all 4 existing migrations as applied (they were orphaned after `db push --force-reset` wiped the `_prisma_migrations` table)
+   - Created migration SQL covering: `TagCategory` enum, `tag`/`tags_on_games`/`tags_on_videos` tables with indexes and foreign keys, `game.opponent` column drop, `game.seasonId` nullable→required with FK change from `SET NULL` to `RESTRICT`
+   - Marked migration as applied via `prisma migrate resolve --applied`
+   - Verified: `prisma migrate status` shows "Database schema is up to date!", `prisma migrate diff` shows empty diff
+
+**Key decisions:**
+
+- **Serializable isolation over raw SQL** — While raw SQL `jsonb ||` was atomic at the SQL level, it bypassed Prisma's type system and wouldn't work with non-PostgreSQL databases. The Serializable transaction approach is database-agnostic, type-safe, and handles concurrency through PostgreSQL's built-in serialization conflict detection.
+- **P2034 retry pattern** — Serializable transactions can fail with `P2034` when concurrent transactions conflict. Retry with random backoff (up to 3 attempts) is the standard Prisma pattern for handling this. With 4 concurrent part uploads, at most 1-2 retries are expected per request.
+- **Migration resolution via `migrate resolve`** — Since the DB was already in the correct state from `db push`, creating the migration file and marking it as applied (without re-running the SQL) was the correct approach. This brings the migration history back in sync with the actual DB state.
+
+**Key learnings:**
+
+- **`prisma migrate resolve --applied`** — When `db push` has been used and you need to bring migration history back in sync, use `migrate resolve --applied <migration_name>` to mark migrations as already applied without re-running their SQL.
+- **`prisma migrate diff --from-config-datasource --to-schema`** — Useful for checking drift between the live database and the schema file. Returns "empty migration" when everything is in sync.
+- **Prisma interactive transactions with adapters** — The `@prisma/adapter-pg` adapter supports Serializable isolation level transactions. The `isolationLevel` option is passed directly to the transaction options object.
+
+**Files created:**
+
+- `packages/db/prisma/migrations/20260211180000_tag_system_and_season_required/migration.sql`
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/uploads/routes.ts` — Replaced raw SQL with Prisma Serializable transaction + retry logic
+- `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 23 — 2026-02-11
+
+**Focus:** Thumbnail upload to S3, Next.js Image config, dashboard game grouping
+
+**Completed:**
+
+1. **Thumbnail upload to S3** — `apps/api/src/lib/s3.ts` + `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Added `PutObjectCommand` import to S3 helpers
+   - New `uploadThumbnail(key, body, contentType)` helper using `PutObjectCommand`
+   - New `POST /orgs/:orgId/videos/:videoId/upload/thumbnail` endpoint: accepts `t.File()` body (JPEG/PNG/WebP, max 5MB), validates video ownership + org membership, uploads to S3 at `orgs/{orgId}/videos/{videoId}/thumbnail.jpg`, updates `thumbnailUrl` and `thumbnailKey` on Video record
+   - Returns the S3 URL in the response
+
+2. **Frontend thumbnail upload** — `apps/web/app/(authenticated)/upload/upload-content.tsx`:
+   - Modified `onComplete` callback to POST the extracted thumbnail blob via `FormData` to the new `/upload/thumbnail` endpoint
+   - Fire-and-forget: thumbnail upload failures don't block or fail the video upload
+   - Uses the `thumbnailBlob` already extracted during file selection via `extractVideoThumbnail()`
+
+3. **Next.js Image S3 support** — `apps/web/next.config.ts`:
+   - Added `images.remotePatterns` array with two entries:
+     - `*.s3.*.amazonaws.com` (regional S3 URLs)
+     - `*.s3.amazonaws.com` (legacy S3 URLs)
+   - Enables `<Image>` component to render S3-hosted thumbnails without "hostname not configured" errors
+
+4. **Dashboard game grouping** — `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx`:
+   - Added `GroupBy` type: `"none" | "season" | "opponent" | "both"`
+   - Added `GameGroup` interface: `{ label: string; games: GameData[] }`
+   - Added `groupGames(games, groupBy)` function implementing 4 grouping strategies:
+     - `none`: single group with all games
+     - `season`: groups by `season.name`, sorted alphabetically
+     - `opponent`: groups by opponent tag name (falls back to "No opponent")
+     - `both`: groups by season first, then opponent within season (label format: "Season — vs. Opponent")
+   - Added "Group by" `<Select>` dropdown in the dashboard header (next to existing season filter)
+   - Groups memoized via `useMemo` with `[games, groupBy]` deps
+   - Section headers render group label + game count `<Badge>` + `<Separator>` divider
+   - `Layers` icon from lucide-react for the group-by selector
+
+**Key decisions:**
+
+- **Fire-and-forget thumbnail upload** — Thumbnail upload is best-effort. If it fails, the video record simply has no thumbnail. The dashboard already handles null `thumbnailUrl` gracefully (shows a placeholder). This avoids blocking the upload completion flow.
+- **Client-side grouping** — All data needed for grouping (season name, opponent tags) is already returned by the Games API. No additional API calls or server-side logic needed. `useMemo` prevents re-grouping on every render.
+- **"Both" grouping format** — Uses "Season Name — vs. Opponent" label to clearly indicate the two-level grouping in a flat section list. Alternative approaches (nested accordion, tree view) were considered but rejected for simplicity.
+
+**Files modified:**
+
+- `apps/api/src/lib/s3.ts` — Added `PutObjectCommand` import, `uploadThumbnail()` helper
+- `apps/api/src/routes/v1/uploads/routes.ts` — Added `POST /thumbnail` endpoint
+- `apps/web/app/(authenticated)/upload/upload-content.tsx` — Thumbnail upload in `onComplete` callback
+- `apps/web/next.config.ts` — Added `images.remotePatterns` for S3 domains
+- `apps/web/app/(authenticated)/dashboard/dashboard-content.tsx` — GroupBy type, groupGames function, group-by Select UI, section headers
+- `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 24 — 2026-02-11
+
+**Focus:** Fix thumbnail upload system — diagnose why thumbnails never reach S3, fix silent error swallowing, fix retry flow
+
+**Problem:** Video thumbnails are extracted client-side during upload but never appear in S3 or the database. The video files themselves upload successfully. The S3 bucket only contains video files, not thumbnails.
+
+**Completed:**
+
+1. **Diagnosed root cause** — The original thumbnail upload `fetch()` in `upload-content.tsx` had a `.catch(() => {})` that silently swallowed ALL errors. The `.then()` handler also never checked `response.ok`, so HTTP 400/500 responses from the API were treated as success. This made the failure completely invisible.
+
+2. **Added client-side error logging** — `apps/web/app/(authenticated)/upload/upload-content.tsx`:
+   - The `.then()` now checks `res.ok` and logs HTTP status + response body via `console.error` on failure
+   - The `.catch()` now logs network errors via `console.error` instead of silently ignoring them
+
+3. **Replaced Elysia `t.File()` body parsing with manual FormData** — `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Elysia's `t.File()` body validation was likely rejecting the multipart upload silently (returning 400 "Validation failed")
+   - Replaced with manual `request.formData()` parsing: reads raw request, calls `formData.get("file")`, validates manually (instanceof Blob, size check, content type)
+   - Removed `body` schema entirely from the route config — only `params` schema remains
+   - Added `console.log` debug statements at received/uploading/success stages for diagnosis
+
+4. **Fixed `retryUpload()` missing callbacks** — `apps/web/app/lib/upload-store.tsx`:
+   - Previously `retryUpload()` only passed `onProgress` to `uploadManager.upload()` — no `onComplete` or `onError`
+   - This meant retried uploads never triggered thumbnail upload and never logged errors
+   - Now passes `onComplete` callback that re-extracts thumbnail from stored `File` via `extractVideoThumbnail()` and uploads to S3
+   - Now passes `onError` callback that logs the failure
+   - Added imports for `extractVideoThumbnail` and `clientEnv`
+
+**Key decisions:**
+
+- **Manual FormData parsing over `t.File()`** — Elysia's `t.File()` relies on internal multipart parsing that may have compatibility issues with browser-generated FormData. Manual `request.formData()` is the standard Web API and works reliably across all runtimes.
+- **Debug logging retained** — The `console.log` statements in the thumbnail endpoint should be removed after confirming the fix works end-to-end in a manual test.
+- **Thumbnail re-extraction on retry** — Since the `UploadEntry` stores the `File` reference but not the thumbnail blob, `retryUpload` re-runs `extractVideoThumbnail()` from the stored file on completion. This is slightly slower than caching the blob but avoids storing large blobs in the store indefinitely.
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/uploads/routes.ts` — Replaced `t.File()` body with manual `request.formData()` parsing, added debug logging
+- `apps/web/app/(authenticated)/upload/upload-content.tsx` — Added `res.ok` check and `console.error` logging to thumbnail fetch
+- `apps/web/app/lib/upload-store.tsx` — Fixed `retryUpload()` to include `onComplete` (with thumbnail upload) and `onError` callbacks
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 25 — 2026-02-11
+
+**Focus:** Fix game deletion to clean up S3 objects, thumbnail upload fixes, presigned URLs for S3 thumbnails
+
+**Completed:**
+
+1. **Game deletion S3 cleanup** — `apps/api/src/routes/v1/games/routes.ts`:
+   - Previously, `DELETE /orgs/:orgId/games/:gameId` did a bare `prisma.game.delete()` — due to `onDelete: SetNull` on Video.gameId, videos were orphaned with their S3 objects (video files, thumbnails) left in the bucket forever
+   - Now finds all videos associated with the game, cleans up each video's S3 objects via `deletePrefix(getVideoPrefix(...))`, aborts in-progress multipart uploads, deletes upload sessions
+   - Deletes all video records + the game in a Prisma batch `$transaction` to ensure atomicity
+   - S3 cleanup failures are caught and don't block the deletion (same pattern as video DELETE handler)
+   - Added imports for `deletePrefix`, `getVideoPrefix`, `abortMultipartUpload` from `../../../lib/s3`
+
+2. **Thumbnail upload endpoint fix** — `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Restored `body: t.Object({ file: t.File() })` schema — the previous manual `request.formData()` approach caused "Body already used" error because Elysia consumes the request body stream before the handler runs
+   - Handler now accesses `body.file` directly (Elysia-parsed)
+   - No longer stores `thumbnailUrl` (public URL) — only stores `thumbnailKey` (S3 key)
+
+3. **Presigned URLs for S3 thumbnails** — Fixed 403 Forbidden on thumbnail images:
+   - Root cause: S3 objects are private by default, and the app was storing/serving direct public URLs that require either ACLs or bucket policies
+   - Games API (`GET /orgs/:orgId/games`) now selects `thumbnailKey` instead of `thumbnailUrl`, generates 1-hour presigned download URLs via `getSignedDownloadUrl()` for each video with a thumbnail
+   - Videos API (`GET /orgs/:orgId/videos` and `GET /orgs/:orgId/videos/:videoId`) also generate presigned URLs from `thumbnailKey`
+   - Frontend unchanged — `thumbnailUrl` field in API responses now contains a presigned URL instead of a public URL
+   - No S3 bucket ACL or policy changes needed
+
+**Key decisions:**
+
+- **`Promise.all` for parallel S3 cleanup** — Each video's S3 cleanup runs in parallel since they're independent operations. This is much faster than sequential cleanup for games with many videos.
+- **Batch `$transaction` for DB deletes** — `prisma.video.deleteMany({ where: { gameId } })` + `prisma.game.delete()` run atomically. If either fails, neither is committed.
+- **Presigned URLs over public ACLs** — Presigned URLs work with any S3 bucket configuration (no ACL/policy changes). 1-hour TTL is long enough for page viewing but short enough for security. The dashboard re-fetches games on navigation, so expired URLs are naturally refreshed.
+- **`t.File()` body schema restored** — The "Body already used" error confirmed that Elysia always consumes the request body internally. Using Elysia's native `t.File()` parsing is the correct approach — the original silent failure was caused by the frontend's `.catch(() => {})` swallowing errors, not by `t.File()` itself.
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/games/routes.ts` — Added S3 imports (`getSignedDownloadUrl`), rewrote DELETE handler with S3 cleanup, games list generates presigned thumbnail URLs
+- `apps/api/src/routes/v1/videos/routes.ts` — Added `getSignedDownloadUrl` import, list and detail endpoints generate presigned thumbnail URLs
+- `apps/api/src/routes/v1/uploads/routes.ts` — Restored `t.File()` body schema, stores only `thumbnailKey` (not `thumbnailUrl`)
 - `AGENTS.md` — Updated Implemented section, added session log
 
 **Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅

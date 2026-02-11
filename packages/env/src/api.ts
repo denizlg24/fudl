@@ -18,6 +18,12 @@ export const apiSchema = sharedSchema.extend({
   // CORS origins
   WEB_APP_URL: z.string().url().optional(),
   DOCS_APP_URL: z.string().url().optional(),
+
+  // AWS S3
+  AWS_S3_BUCKET: z.string().min(1),
+  AWS_S3_REGION: z.string().default("us-east-1"),
+  AWS_ACCESS_KEY_ID: z.string().min(1),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1),
 });
 
 export const apiEnv = parseEnv(apiSchema);
@@ -39,7 +45,7 @@ export const apiConfig = {
     origins:
       apiEnv.NODE_ENV === "production"
         ? [apiEnv.WEB_APP_URL, apiEnv.DOCS_APP_URL].filter(
-            (url): url is string => Boolean(url)
+            (url): url is string => Boolean(url),
           )
         : ["http://localhost:3000", "http://localhost:3001"],
     credentials: true,
@@ -47,5 +53,12 @@ export const apiConfig = {
 
   auth: {
     cookiePrefix: "fudl_auth",
+  },
+
+  s3: {
+    bucket: apiEnv.AWS_S3_BUCKET,
+    region: apiEnv.AWS_S3_REGION,
+    accessKeyId: apiEnv.AWS_ACCESS_KEY_ID,
+    secretAccessKey: apiEnv.AWS_SECRET_ACCESS_KEY,
   },
 } as const;

@@ -1,5 +1,12 @@
-import { requireAuth, getServerOrg, listUserOrgs } from "../lib/auth";
+import {
+  requireAuth,
+  getServerOrg,
+  listUserOrgs,
+  getActiveMember,
+} from "../lib/auth";
 import { NavBar } from "./components/nav-bar";
+import { UploadStoreProvider } from "../lib/upload-store";
+import { UploadIndicator } from "./components/upload-indicator";
 
 export default async function AuthenticatedLayout({
   children,
@@ -8,9 +15,12 @@ export default async function AuthenticatedLayout({
 }) {
   const session = await requireAuth();
 
-  const [org, orgsList] = await Promise.all([
-    session.session.activeOrganizationId ? getServerOrg() : null,
+  const hasActiveOrg = !!session.session.activeOrganizationId;
+
+  const [org, orgsList, activeMember] = await Promise.all([
+    hasActiveOrg ? getServerOrg() : null,
     listUserOrgs(),
+    hasActiveOrg ? getActiveMember() : null,
   ]);
 
   const orgs = (orgsList ?? []).map((o) => ({
@@ -23,6 +33,9 @@ export default async function AuthenticatedLayout({
   const userEmail = session.user.email || "";
   const orgName = org?.name ?? null;
   const activeOrgId = org?.id ?? null;
+  const role = (activeMember as Record<string, unknown> | null)?.role as
+    | string
+    | null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -31,9 +44,13 @@ export default async function AuthenticatedLayout({
         userEmail={userEmail}
         orgName={orgName}
         activeOrgId={activeOrgId}
+        role={role ?? null}
         orgs={orgs}
       />
-      <main>{children}</main>
+      <UploadStoreProvider>
+        <main>{children}</main>
+        <UploadIndicator />
+      </UploadStoreProvider>
     </div>
   );
 }

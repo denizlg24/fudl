@@ -109,6 +109,8 @@ model Organization {
   seasons     Season[]
   games       Game[]
   videos      Video[]
+  clips       Clip[]
+  tags        Tag[]
 
   @@unique([slug])
   @@map("organization")
@@ -188,15 +190,15 @@ model Game {
   title          String
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  seasonId       String?
-  season         Season?      @relation(fields: [seasonId], references: [id], onDelete: SetNull)
-  opponent       String?
+  seasonId       String
+  season         Season       @relation(fields: [seasonId], references: [id], onDelete: Restrict)
   date           DateTime?
   location       String?
   notes          String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   videos         Video[]
+  tags           TagsOnGames[]
 
   @@index([organizationId])
   @@index([seasonId])
@@ -226,8 +228,14 @@ model Video {
   storageKey     String?
   storageUrl     String?
   mimeType       String?
-  fileSize       Int?
+  fileSize        BigInt?
   durationSecs   Float?
+  thumbnailKey   String?
+  thumbnailUrl   String?
+  width          Int?
+  height         Int?
+  fps            Float?
+  codec          String?
 
   // Processing
   status         VideoStatus  @default(PENDING)
@@ -237,9 +245,104 @@ model Video {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
+  uploadSession  UploadSession?
+  clips          Clip[]
+  tags           TagsOnVideos[]
+
   @@index([organizationId])
   @@index([gameId])
   @@index([uploadedById])
   @@index([status])
   @@map("video")
+}
+
+model UploadSession {
+  id             String   @id @default(cuid())
+  videoId        String   @unique
+  video          Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  s3UploadId     String
+  s3Key          String
+  totalParts     Int
+  partSize       Int
+  completedParts Json     @default("[]") // Array of {partNumber, etag}
+  totalBytes     BigInt
+  uploadedBytes  BigInt   @default(0)
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([videoId])
+  @@map("upload_session")
+}
+
+model Clip {
+  id             String       @id @default(cuid())
+  videoId        String
+  video          Video        @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String?
+  startTime      Float
+  endTime        Float
+  storageKey     String?
+  storageUrl     String?
+  thumbnailKey   String?
+  thumbnailUrl   String?
+  labels         Json         @default("[]")
+  metadata       Json         @default("{}")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([videoId])
+  @@index([organizationId])
+  @@map("clip")
+}
+
+// ===========================================================================
+// Tag System
+// ===========================================================================
+
+enum TagCategory {
+  OPPONENT
+  FIELD
+  CAMERA_ANGLE
+  GENERAL
+}
+
+model Tag {
+  id             String       @id @default(cuid())
+  name           String
+  category       TagCategory
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  games  TagsOnGames[]
+  videos TagsOnVideos[]
+
+  @@unique([organizationId, category, name])
+  @@index([organizationId, category])
+  @@map("tag")
+}
+
+model TagsOnGames {
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, tagId])
+  @@index([tagId])
+  @@map("tags_on_games")
+}
+
+model TagsOnVideos {
+  videoId String
+  video   Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  tagId   String
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([videoId, tagId])
+  @@index([tagId])
+  @@map("tags_on_videos")
 }

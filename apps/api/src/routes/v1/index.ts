@@ -11,6 +11,8 @@ import { seasonRoutes } from "./seasons";
 import { gameRoutes } from "./games";
 import { videoRoutes } from "./videos";
 import { inviteLinkRoutes } from "./invite-links";
+import { uploadRoutes } from "./uploads";
+import { tagRoutes } from "./tags";
 
 export const v1Routes = new Elysia({ prefix: "/v1" })
   .use(healthRoutes)
@@ -19,4 +21,6 @@ export const v1Routes = new Elysia({ prefix: "/v1" })
   .use(seasonRoutes)
   .use(gameRoutes)
   .use(videoRoutes)
-  .use(inviteLinkRoutes);
+  .use(inviteLinkRoutes)
+  .use(uploadRoutes)
+  .use(tagRoutes);

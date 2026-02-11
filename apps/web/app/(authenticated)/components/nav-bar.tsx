@@ -24,6 +24,7 @@ import {
 } from "@repo/ui/components/sheet";
 import Link from "next/link";
 import { Menu, LogOut, Settings, User } from "lucide-react";
+import { isCoachRole } from "@repo/types";
 
 function getInitials(name: string): string {
   return name
@@ -38,24 +39,31 @@ const NAV_LINKS: ReadonlyArray<{
   href: string;
   label: string;
   requiresOrg?: boolean;
+  coachOnly?: boolean;
 }> = [
   { href: "/dashboard", label: "Home" },
   { href: "/seasons", label: "Seasons", requiresOrg: true },
   { href: "/roster", label: "Roster", requiresOrg: true },
+  { href: "/upload", label: "Upload", requiresOrg: true, coachOnly: true },
 ];
 
 function NavLinks({
   pathname,
   hasOrg,
+  role,
   onClick,
 }: {
   pathname: string;
   hasOrg: boolean;
+  role: string | null;
   onClick?: () => void;
 }) {
+  const isCoach = role ? isCoachRole(role) : false;
   return (
     <>
-      {NAV_LINKS.filter((link) => !link.requiresOrg || hasOrg).map((link) => {
+      {NAV_LINKS.filter(
+        (link) => (!link.requiresOrg || hasOrg) && (!link.coachOnly || isCoach),
+      ).map((link) => {
         const isActive = pathname === link.href;
         return (
           <Link
@@ -84,6 +92,7 @@ export interface NavBarProps {
   userEmail: string;
   orgName: string | null;
   activeOrgId: string | null;
+  role: string | null;
   orgs: Array<{ id: string; name: string; slug: string }>;
 }
 
@@ -91,6 +100,7 @@ export function NavBar({
   userName,
   userEmail,
   activeOrgId,
+  role,
   orgs,
 }: NavBarProps) {
   const router = useRouter();
@@ -122,7 +132,7 @@ export function NavBar({
 
           {/* Desktop nav links */}
           <nav className="hidden sm:flex items-center gap-4">
-            <NavLinks pathname={pathname} hasOrg={hasOrg} />
+            <NavLinks pathname={pathname} hasOrg={hasOrg} role={role} />
           </nav>
         </div>
 
@@ -217,6 +227,7 @@ export function NavBar({
                 <NavLinks
                   pathname={pathname}
                   hasOrg={hasOrg}
+                  role={role}
                   onClick={() => setMobileNavOpen(false)}
                 />
                 <Separator className="my-2" />

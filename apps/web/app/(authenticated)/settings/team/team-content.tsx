@@ -69,7 +69,6 @@ import {
   type InviteValues,
 } from "@repo/types/validations";
 import Link from "next/link";
-import { toast } from "sonner";
 import {
   ChevronLeft,
   MoreHorizontal,
@@ -208,6 +207,13 @@ export function TeamSettingsContent({
   const [transferTarget, setTransferTarget] = useState<MemberData | null>(null);
   const [isTransferring, setIsTransferring] = useState(false);
 
+  // Inline error/feedback state
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [teamNameError, setTeamNameError] = useState<string | null>(null);
+  const [inviteLinkError, setInviteLinkError] = useState<string | null>(null);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [linkGeneratedCopied, setLinkGeneratedCopied] = useState(false);
+
   const form = useForm<InviteValues>({
     resolver: standardSchemaResolver(inviteSchema),
     defaultValues: { email: "", role: "member" },
@@ -300,9 +306,10 @@ export function TeamSettingsContent({
   const handleSaveTeamName = async () => {
     const result = teamNameSchema.safeParse({ name: teamNameValue });
     if (!result.success) {
-      toast.error(result.error.issues[0]?.message || "Invalid team name");
+      setTeamNameError(result.error.issues[0]?.message || "Invalid team name");
       return;
     }
+    setTeamNameError(null);
     setSavingName(true);
     try {
       const { error } = await authClient.organization.update({
@@ -310,9 +317,8 @@ export function TeamSettingsContent({
         organizationId: activeOrgId,
       });
       if (error) {
-        toast.error(error.message || "Failed to update team name");
+        setTeamNameError(error.message || "Failed to update team name");
       } else {
-        toast.success("Team name updated");
         setEditingName(false);
       }
     } finally {
@@ -327,51 +333,52 @@ export function TeamSettingsContent({
       organizationId: activeOrgId,
     });
     if (error) {
-      toast.error(error.message || "Failed to send invitation");
+      form.setError("root", {
+        message: error.message || "Failed to send invitation",
+      });
       return;
     }
-    toast.success(`Invitation sent to ${values.email}`);
     form.reset();
     setShowInviteForm(false);
     reloadData();
   };
 
   const cancelInvitation = async (invitationId: string) => {
+    setActionError(null);
     const { error } = await authClient.organization.cancelInvitation({
       invitationId,
     });
     if (error) {
-      toast.error(error.message || "Failed to cancel invitation");
+      setActionError(error.message || "Failed to cancel invitation");
       return;
     }
-    toast.success("Invitation cancelled");
     reloadData();
   };
 
   const removeMember = async (memberIdOrEmail: string) => {
+    setActionError(null);
     const { error } = await authClient.organization.removeMember({
       memberIdOrEmail,
       organizationId: activeOrgId,
     });
     if (error) {
-      toast.error(error.message || "Failed to remove member");
+      setActionError(error.message || "Failed to remove member");
       return;
     }
-    toast.success("Member removed");
     reloadData();
   };
 
   const updateMemberRole = async (memberId: string, role: string) => {
+    setActionError(null);
     const { error } = await authClient.organization.updateMemberRole({
       memberId,
       role,
       organizationId: activeOrgId,
     });
     if (error) {
-      toast.error(error.message || "Failed to update role");
+      setActionError(error.message || "Failed to update role");
       return;
     }
-    toast.success("Role updated");
     reloadData();
   };
 
@@ -382,11 +389,12 @@ export function TeamSettingsContent({
       expiresInHours: linkExpiresInHours,
     });
     if (!result.success) {
-      toast.error(
+      setInviteLinkError(
         result.error.issues[0]?.message || "Invalid invite link settings",
       );
       return;
     }
+    setInviteLinkError(null);
     setGeneratingLink(true);
     try {
       const res = await fetch(`${API_URL}/orgs/${activeOrgId}/invite-links`, {
@@ -401,13 +409,14 @@ export function TeamSettingsContent({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        toast.error(data?.error || "Failed to generate invite link");
+        setInviteLinkError(data?.error || "Failed to generate invite link");
         return;
       }
       const data = await res.json();
       const inviteUrl = `${getWebAppUrl()}/invite?token=${data.link.token}`;
       await navigator.clipboard.writeText(inviteUrl);
-      toast.success("Link copied to clipboard");
+      setLinkGeneratedCopied(true);
+      setTimeout(() => setLinkGeneratedCopied(false), 2000);
       reloadData();
     } finally {
       setGeneratingLink(false);
@@ -415,33 +424,34 @@ export function TeamSettingsContent({
   };
 
   const revokeInviteLink = async (linkId: string) => {
+    setActionError(null);
     const res = await fetch(
       `${API_URL}/orgs/${activeOrgId}/invite-links/${linkId}`,
       { method: "DELETE", credentials: "include" },
     );
     if (!res.ok) {
-      toast.error("Failed to revoke invite link");
+      setActionError("Failed to revoke invite link");
       return;
     }
-    toast.success("Invite link revoked");
     reloadData();
   };
 
   const handleDeleteTeam = async () => {
+    setActionError(null);
     const { error } = await authClient.organization.delete({
       organizationId: activeOrgId,
     });
     if (error) {
-      toast.error(error.message || "Failed to delete team");
+      setActionError(error.message || "Failed to delete team");
       return;
     }
-    toast.success("Team deleted");
     router.push("/");
   };
 
   const handleTransferOwnership = async () => {
     if (!transferTarget) return;
     setIsTransferring(true);
+    setActionError(null);
     try {
       // Promote target member to owner
       const { error: promoteError } =
@@ -451,7 +461,7 @@ export function TeamSettingsContent({
           organizationId: activeOrgId,
         });
       if (promoteError) {
-        toast.error(
+        setActionError(
           promoteError.message || "Failed to promote member to owner",
         );
         return;
@@ -467,7 +477,7 @@ export function TeamSettingsContent({
             organizationId: activeOrgId,
           });
         if (demoteError) {
-          toast.error(
+          setActionError(
             demoteError.message || "Failed to update your role to coach",
           );
           // Ownership was already transferred, reload to reflect partial state
@@ -476,9 +486,6 @@ export function TeamSettingsContent({
         }
       }
 
-      toast.success(
-        `Ownership transferred to ${transferTarget.user.name}. You are now a coach.`,
-      );
       setCurrentMemberRole("admin");
       setTransferTarget(null);
       reloadData();
@@ -505,6 +512,21 @@ export function TeamSettingsContent({
           Manage your team, members, and invite links.
         </p>
       </div>
+
+      {/* Action error banner */}
+      {actionError && (
+        <div className="flex items-center justify-between gap-2 mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3">
+          <p className="text-sm text-destructive">{actionError}</p>
+          <button
+            type="button"
+            className="shrink-0 text-destructive hover:text-destructive/80"
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss error"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
 
       <div className="space-y-10">
         {/* Team Profile */}
@@ -561,6 +583,11 @@ export function TeamSettingsContent({
                 )}
               </div>
             </div>
+            {teamNameError && (
+              <p className="text-sm text-destructive sm:ml-32 -mt-1">
+                {teamNameError}
+              </p>
+            )}
 
             {/* Team slug */}
             <div className="flex flex-col sm:flex-row sm:items-start gap-2">
@@ -795,6 +822,11 @@ export function TeamSettingsContent({
                         )}
                       />
                     </div>
+                    {form.formState.errors.root && (
+                      <p className="text-sm text-destructive">
+                        {form.formState.errors.root.message}
+                      </p>
+                    )}
                     <div className="flex justify-end gap-2">
                       <Button
                         type="button"
@@ -973,7 +1005,16 @@ export function TeamSettingsContent({
                   </Select>
                 </div>
               </div>
-              <div className="flex justify-end">
+              {inviteLinkError && (
+                <p className="text-sm text-destructive">{inviteLinkError}</p>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                {linkGeneratedCopied && (
+                  <span className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Check className="size-3.5" />
+                    Link copied
+                  </span>
+                )}
                 <Button
                   size="sm"
                   onClick={generateInviteLink}
@@ -1028,10 +1069,15 @@ export function TeamSettingsContent({
                               onClick={() => {
                                 const url = `${getWebAppUrl()}/invite?token=${link.token}`;
                                 navigator.clipboard.writeText(url);
-                                toast.success("Link copied to clipboard");
+                                setCopiedLinkId(link.id);
+                                setTimeout(() => setCopiedLinkId(null), 2000);
                               }}
                             >
-                              <Copy className="size-4" />
+                              {copiedLinkId === link.id ? (
+                                <Check className="size-4" />
+                              ) : (
+                                <Copy className="size-4" />
+                              )}
                               <span className="sr-only">Copy</span>
                             </Button>
                             <AlertDialog>

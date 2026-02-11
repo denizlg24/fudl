@@ -1,17 +1,32 @@
 /**
  * Video Routes - v1
- * CRUD operations for videos within an organization
- *
- * Note: File upload is not implemented yet — these routes manage
- * video metadata records. Upload endpoints will be added when
- * cloud storage integration (S3 or similar) is set up.
+ * CRUD operations for videos within an organization.
+ * Upload lifecycle is handled by the uploads routes.
+ * Deletion includes S3 cleanup of all associated objects.
  */
 
 import { Elysia, t } from "elysia";
 import { prisma, VideoStatus } from "@repo/db";
 import { authPlugin, ApiError } from "../../../middleware";
+import {
+  deletePrefix,
+  getVideoPrefix,
+  abortMultipartUpload,
+  getSignedDownloadUrl,
+} from "../../../lib/s3";
 
 const videoStatusValues = Object.values(VideoStatus) as [string, ...string[]];
+
+/** Tag include shape for video responses */
+const tagInclude = {
+  tags: {
+    select: {
+      tag: {
+        select: { id: true, name: true, category: true },
+      },
+    },
+  },
+} as const;
 
 export const videoRoutes = new Elysia({
   prefix: "/orgs/:organizationId/videos",
@@ -41,10 +56,21 @@ export const videoRoutes = new Elysia({
         include: {
           game: { select: { id: true, title: true } },
           uploadedBy: { select: { id: true, name: true, email: true } },
+          ...tagInclude,
         },
       });
 
-      return { videos };
+      const videosWithTags = await Promise.all(
+        videos.map(async (video) => ({
+          ...video,
+          tags: video.tags.map((entry) => entry.tag),
+          thumbnailUrl: video.thumbnailKey
+            ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
+            : video.thumbnailUrl,
+        })),
+      );
+
+      return { videos: videosWithTags };
     },
     {
       isOrgMember: true,
@@ -78,6 +104,22 @@ export const videoRoutes = new Elysia({
         }
       }
 
+      // Validate tags belong to same org if provided
+      if (body.tagIds && body.tagIds.length > 0) {
+        const validTags = await prisma.tag.count({
+          where: {
+            id: { in: body.tagIds },
+            organizationId: params.organizationId,
+          },
+        });
+        if (validTags !== body.tagIds.length) {
+          throw new ApiError(
+            400,
+            "One or more tags not found in this organization",
+          );
+        }
+      }
+
       const video = await prisma.video.create({
         data: {
           title: body.title,
@@ -85,16 +127,28 @@ export const videoRoutes = new Elysia({
           gameId: body.gameId ?? null,
           uploadedById: user!.id,
           mimeType: body.mimeType ?? null,
-          fileSize: body.fileSize ?? null,
+          fileSize: body.fileSize != null ? BigInt(body.fileSize) : null,
           status: "PENDING",
+          ...(body.tagIds &&
+            body.tagIds.length > 0 && {
+              tags: {
+                create: body.tagIds.map((tagId) => ({ tagId })),
+              },
+            }),
         },
         include: {
           game: { select: { id: true, title: true } },
           uploadedBy: { select: { id: true, name: true, email: true } },
+          ...tagInclude,
         },
       });
 
-      return { video };
+      return {
+        video: {
+          ...video,
+          tags: video.tags.map((entry) => entry.tag),
+        },
+      };
     },
     {
       isCoach: true,
@@ -113,7 +167,8 @@ export const videoRoutes = new Elysia({
             t.Literal("video/x-matroska"),
           ]),
         ),
-        fileSize: t.Optional(t.Integer({ minimum: 0 })),
+        fileSize: t.Optional(t.Number({ minimum: 0 })),
+        tagIds: t.Optional(t.Array(t.String())),
       }),
     },
   )
@@ -133,6 +188,7 @@ export const videoRoutes = new Elysia({
         include: {
           game: { select: { id: true, title: true } },
           uploadedBy: { select: { id: true, name: true, email: true } },
+          ...tagInclude,
         },
       });
 
@@ -140,7 +196,15 @@ export const videoRoutes = new Elysia({
         throw new ApiError(404, "Video not found");
       }
 
-      return { video };
+      return {
+        video: {
+          ...video,
+          tags: video.tags.map((entry) => entry.tag),
+          thumbnailUrl: video.thumbnailKey
+            ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
+            : video.thumbnailUrl,
+        },
+      };
     },
     {
       isOrgMember: true,
@@ -153,7 +217,7 @@ export const videoRoutes = new Elysia({
 
   /**
    * PATCH /orgs/:organizationId/videos/:videoId
-   * Update video metadata (title, game association)
+   * Update video metadata (title, game association, tags)
    */
   .patch(
     "/:videoId",
@@ -182,19 +246,48 @@ export const videoRoutes = new Elysia({
         }
       }
 
+      // Validate tags belong to same org if provided
+      if (body.tagIds && body.tagIds.length > 0) {
+        const validTags = await prisma.tag.count({
+          where: {
+            id: { in: body.tagIds },
+            organizationId: params.organizationId,
+          },
+        });
+        if (validTags !== body.tagIds.length) {
+          throw new ApiError(
+            400,
+            "One or more tags not found in this organization",
+          );
+        }
+      }
+
       const video = await prisma.video.update({
         where: { id: params.videoId },
         data: {
           ...(body.title !== undefined && { title: body.title }),
           ...(body.gameId !== undefined && { gameId: body.gameId }),
+          // Replace all tags if tagIds is provided
+          ...(body.tagIds !== undefined && {
+            tags: {
+              deleteMany: {},
+              create: (body.tagIds ?? []).map((tagId) => ({ tagId })),
+            },
+          }),
         },
         include: {
           game: { select: { id: true, title: true } },
           uploadedBy: { select: { id: true, name: true, email: true } },
+          ...tagInclude,
         },
       });
 
-      return { video };
+      return {
+        video: {
+          ...video,
+          tags: video.tags.map((entry) => entry.tag),
+        },
+      };
     },
     {
       isCoach: true,
@@ -205,6 +298,7 @@ export const videoRoutes = new Elysia({
       body: t.Object({
         title: t.Optional(t.String({ minLength: 1, maxLength: 200 })),
         gameId: t.Optional(t.Nullable(t.String())),
+        tagIds: t.Optional(t.Array(t.String())),
       }),
     },
   )
@@ -227,8 +321,25 @@ export const videoRoutes = new Elysia({
         throw new ApiError(404, "Video not found");
       }
 
-      // TODO: When cloud storage is implemented, also delete the file
-      // from S3/storage before removing the database record.
+      // Clean up S3 objects (original video, thumbnail, clips)
+      const prefix = getVideoPrefix(params.organizationId, params.videoId);
+      await deletePrefix(prefix).catch(() => {
+        // S3 cleanup failure should not block deletion
+      });
+
+      // Abort any in-progress multipart upload
+      const uploadSession = await prisma.uploadSession.findUnique({
+        where: { videoId: params.videoId },
+      });
+      if (uploadSession) {
+        await abortMultipartUpload(
+          uploadSession.s3Key,
+          uploadSession.s3UploadId,
+        ).catch(() => {});
+        await prisma.uploadSession.delete({
+          where: { videoId: params.videoId },
+        });
+      }
 
       await prisma.video.delete({
         where: { id: params.videoId },

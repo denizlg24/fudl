@@ -1,5 +1,10 @@
 /** Job states in BullMQ */
-export type JobState = "waiting" | "active" | "completed" | "failed" | "delayed";
+export type JobState =
+  | "waiting"
+  | "active"
+  | "completed"
+  | "failed"
+  | "delayed";
 
 /** Player analysis data from the ML model */
 export interface PlayerAnalysis {
@@ -15,9 +20,29 @@ export interface VideoAnalysisResult {
   analysis_complete: boolean;
 }
 
-/** Data submitted with a video analysis job */
+/** Data submitted with a video analysis job (legacy — used by the analysis demo route) */
 export interface VideoJobData {
   videoUrl: string;
+}
+
+/** Data submitted with a video processing job (post-upload pipeline) */
+export interface VideoProcessJobData {
+  videoId: string;
+  organizationId: string;
+  s3Key: string;
+  s3Bucket: string;
+  s3Region: string;
+}
+
+/** Result returned by the video processing worker */
+export interface VideoProcessResult {
+  thumbnailKey: string | null;
+  thumbnailUrl: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  codec: string | null;
+  durationSecs: number | null;
 }
 
 /** Full job status returned by the API */

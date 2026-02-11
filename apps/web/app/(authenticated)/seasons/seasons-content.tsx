@@ -49,8 +49,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@repo/ui/components/empty";
-import { toast } from "sonner";
-import { Plus, Calendar, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Plus, Calendar, MoreVertical, Pencil, Trash2, X } from "lucide-react";
 import { clientEnv } from "@repo/env/web";
 
 const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
@@ -127,6 +126,7 @@ function CreateSeasonDialog({
     handleSubmit,
     reset,
     control,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<CreateSeasonValues>({
     resolver: standardSchemaResolver(createSeasonSchema),
@@ -148,13 +148,12 @@ function CreateSeasonDialog({
     if (!res.ok) {
       const err = await res.json().catch(() => null);
       const message = err?.message || err?.error || "Failed to create season";
-      toast.error(message);
+      setError("root", { message });
       return;
     }
 
     const data = await res.json();
     onCreated(data.season);
-    toast.success("Season created");
     reset();
     setOpen(false);
   };
@@ -175,6 +174,12 @@ function CreateSeasonDialog({
               Add a new season to organize your games.
             </DialogDescription>
           </DialogHeader>
+
+          {errors.root && (
+            <p className="text-sm text-destructive px-1">
+              {errors.root.message}
+            </p>
+          )}
 
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -269,6 +274,7 @@ function EditSeasonDialog({
     handleSubmit,
     reset,
     control,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<CreateSeasonValues>({
     resolver: standardSchemaResolver(createSeasonSchema),
@@ -294,13 +300,12 @@ function EditSeasonDialog({
     if (!res.ok) {
       const err = await res.json().catch(() => null);
       const message = err?.message || err?.error || "Failed to update season";
-      toast.error(message);
+      setError("root", { message });
       return;
     }
 
     const data = await res.json();
     onUpdated(data.season);
-    toast.success("Season updated");
     setOpen(false);
   };
 
@@ -330,6 +335,12 @@ function EditSeasonDialog({
             <DialogTitle>Edit season</DialogTitle>
             <DialogDescription>Update the season details.</DialogDescription>
           </DialogHeader>
+
+          {errors.root && (
+            <p className="text-sm text-destructive px-1 pt-2">
+              {errors.root.message}
+            </p>
+          )}
 
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -487,15 +498,16 @@ function SeasonRow({
                       Delete &ldquo;{season.name}&rdquo;?
                     </AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will permanently delete this season. Games currently
-                      in this season will be preserved but will no longer be
-                      associated with any season.
+                      {gameCount > 0
+                        ? `This season has ${gameCount} game${gameCount !== 1 ? "s" : ""}. You must move or delete all games before deleting the season.`
+                        : "This will permanently delete this season. This action cannot be undone."}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction
                       onClick={() => onDeleted(season.id)}
+                      disabled={gameCount > 0}
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     >
                       Delete
@@ -525,6 +537,7 @@ export function SeasonsContent({
   activeOrgId: string;
 }) {
   const [seasons, setSeasons] = useState<SeasonData[]>(initialSeasons);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const isCoach = isCoachRole(role);
 
   const handleCreated = useCallback((season: SeasonData) => {
@@ -537,17 +550,17 @@ export function SeasonsContent({
 
   const handleDeleted = useCallback(
     async (seasonId: string) => {
+      setDeleteError(null);
       const res = await fetch(
         `${API_URL}/orgs/${activeOrgId}/seasons/${seasonId}`,
         { method: "DELETE", credentials: "include" },
       );
 
       if (res.ok) {
-        toast.success("Season deleted");
         setSeasons((prev) => prev.filter((s) => s.id !== seasonId));
       } else {
         const err = await res.json().catch(() => null);
-        toast.error(err?.message || err?.error || "Failed to delete season");
+        setDeleteError(err?.message || err?.error || "Failed to delete season");
       }
     },
     [activeOrgId],
@@ -570,6 +583,21 @@ export function SeasonsContent({
           <CreateSeasonDialog orgId={activeOrgId} onCreated={handleCreated} />
         )}
       </div>
+
+      {/* Delete error banner */}
+      {deleteError && (
+        <div className="flex items-center justify-between gap-2 mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3">
+          <p className="text-sm text-destructive">{deleteError}</p>
+          <button
+            type="button"
+            className="shrink-0 text-destructive hover:text-destructive/80"
+            onClick={() => setDeleteError(null)}
+            aria-label="Dismiss error"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
 
       {/* Season list */}
       {seasons.length === 0 ? (

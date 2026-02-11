@@ -13,17 +13,19 @@ import {
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Separator } from "@repo/ui/components/separator";
-import { toast } from "sonner";
 import { Users, Plus, Link as LinkIcon } from "lucide-react";
 
 export function NoTeamDashboard({ userName }: { userName: string }) {
   const router = useRouter();
   const [inviteUrl, setInviteUrl] = useState("");
   const [joining, setJoining] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   const handleJoinTeam = () => {
+    setInviteError(null);
+
     if (!inviteUrl.trim()) {
-      toast.error("Please paste an invite link.");
+      setInviteError("Please paste an invite link.");
       return;
     }
 
@@ -33,7 +35,7 @@ export function NoTeamDashboard({ userName }: { userName: string }) {
       const token = url.searchParams.get("token");
 
       if (!token) {
-        toast.error(
+        setInviteError(
           "Invalid invite link. The link should contain a token parameter.",
         );
         return;
@@ -42,7 +44,7 @@ export function NoTeamDashboard({ userName }: { userName: string }) {
       setJoining(true);
       router.push(`/invite?token=${encodeURIComponent(token)}`);
     } catch {
-      toast.error("Invalid URL. Please paste the full invite link.");
+      setInviteError("Invalid URL. Please paste the full invite link.");
     }
   };
 
@@ -109,11 +111,17 @@ export function NoTeamDashboard({ userName }: { userName: string }) {
                   id="invite-url"
                   placeholder="fudl.app/invite?token=..."
                   value={inviteUrl}
-                  onChange={(e) => setInviteUrl(e.target.value)}
+                  onChange={(e) => {
+                    setInviteUrl(e.target.value);
+                    if (inviteError) setInviteError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleJoinTeam();
                   }}
                 />
+                {inviteError && (
+                  <p className="text-sm text-destructive">{inviteError}</p>
+                )}
               </div>
               <Button
                 onClick={handleJoinTeam}
