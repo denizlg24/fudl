@@ -74,7 +74,10 @@ export function getVideoPrefix(orgId: string, videoId: string): string {
   return `orgs/${orgId}/videos/${videoId}/`;
 }
 
-/** Build a public URL for an S3 object. */
+/**
+ * Build a public URL for an S3 object.
+ * @deprecated The bucket is private — use `getSignedDownloadUrl()` instead.
+ */
 export function getPublicUrl(key: string): string {
   return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}`;
 }
@@ -217,21 +220,20 @@ export async function getSignedDownloadUrl(
   return getSignedUrl(s3, command, { expiresIn });
 }
 
-/** Upload a thumbnail buffer to S3 and return the public URL. */
+/** Upload a thumbnail buffer to S3. Returns only the S3 key — use presigned URLs for access. */
 export async function uploadThumbnail(
   orgId: string,
   videoId: string,
   data: Uint8Array,
   contentType = "image/jpeg",
-): Promise<{ key: string; url: string }> {
+): Promise<{ key: string }> {
   const key = getThumbnailKey(orgId, videoId);
   const command = new PutObjectCommand({
     Bucket: S3_BUCKET,
     Key: key,
     Body: data,
     ContentType: contentType,
-    CacheControl: "public, max-age=31536000, immutable",
   });
   await s3.send(command);
-  return { key, url: getPublicUrl(key) };
+  return { key };
 }

@@ -142,8 +142,8 @@ The goal of FUDL is to provide coaches and players with:
 - **Games API includes videos relation** — `GET /orgs/:orgId/games` now returns `videos: [{ id, status, thumbnailUrl }]` alongside `_count`, so the dashboard can display footage status per game.
 - **Dashboard auto-refresh after upload** — Dashboard detects when active upload count drops to 0 and re-fetches games from the API. Also syncs with server-rendered `initialGames` on navigation.
 - **Upload indicator action buttons** — Per-entry cancel (active uploads), retry (failed uploads), and dismiss (completed/failed/cancelled) buttons. Global "clear all" when no uploads are active. Tooltips on all actions. No nested `<button>` elements (uses `<div role="button">`).
-- **Upload store retry support** — `UploadEntry` stores the `File` reference. `retryUpload(videoId)` method re-invokes the upload manager with the stored file. Exposed via `useUploadActions()` hook.
-- **Video status interim fix** — Upload `/complete` endpoint keeps video status as `UPLOADED` instead of transitioning to `PROCESSING`. The worker will handle the `UPLOADED` -> `PROCESSING` -> `COMPLETED` transitions when implemented.
+- **Upload store retry support** — `UploadEntry` stores the `File` reference. `retryUpload(videoId)` method re-invokes the upload manager with the stored file. Exposed via `useUploadActions()` hook. Upload state is ephemeral (session-only via React context) — no localStorage persistence.
+- **No automatic job scheduling on upload** — Upload `/complete` endpoint finalizes the S3 multipart upload and sets video status to `UPLOADED`. No BullMQ job is queued — coaches will manually trigger analysis later.
 - **Tag system (full stack)** — Categorized, org-scoped tags with `TagCategory` enum (`OPPONENT`, `FIELD`, `CAMERA_ANGLE`, `GENERAL`). `Tag` model with unique `[organizationId, category, name]` constraint. `TagsOnGames` and `TagsOnVideos` join tables for many-to-many relationships. API CRUD routes (`GET/POST/DELETE /orgs/:orgId/tags`) with lazy auto-seeding of default camera angle tags per org. Game and Video API routes accept `tagIds` on create/update with org validation. Tags flattened in all API responses. Old `opponent` field removed from Game model — opponents are now tags with `category=OPPONENT`.
 - **TagCombobox component** — Reusable `Popover` + `Command` combobox for tag selection. Supports single and multi-select modes, lazy loading on popover open, create-on-fly for new tags, badge display for multi-select with remove buttons. Used across upload form for opponent, field, general tags, and per-video camera angles.
 - **Upload form tag integration** — Upload form step 2 includes `TagCombobox` for opponent (single), field/location (single), general tags (multi), and per-video camera angle (single). Tag IDs passed to game and video create API calls. `GameOption` updated to use `tags[]` instead of `opponent` string.
@@ -155,7 +155,7 @@ The goal of FUDL is to provide coaches and players with:
 - **Dashboard game grouping** — "Group by" `<Select>` dropdown with 4 options: No grouping, By season, By opponent, Season + opponent. Client-side `groupGames()` function with `GameGroup` interface, memoized via `useMemo`. Section headers with group label, game count badge, and divider line. "Both" mode groups by season first, then opponent within each season.
 - **Game deletion cleans up S3 objects** — Game DELETE handler finds all associated videos, deletes their S3 objects via `deletePrefix()`, aborts in-progress multipart uploads, deletes upload sessions, then deletes all video records and the game in a Prisma batch transaction. No orphaned S3 objects or video records after game deletion.
 - **Thumbnail upload fix** — Replaced Elysia's `t.File()` body parsing with manual `request.formData()` for thumbnail upload endpoint. Fixed silent error swallowing in frontend thumbnail fetch (now checks `res.ok` and logs errors). Fixed `retryUpload()` to include `onComplete` and `onError` callbacks.
-- **Presigned URLs for S3 thumbnails** — Thumbnail upload stores only the S3 key (not a public URL). Games and Videos API endpoints generate 1-hour presigned download URLs via `getSignedDownloadUrl()` when serving responses. No S3 bucket ACL or policy changes needed.
+- **Presigned URLs for all S3 objects** — S3 bucket is private; all access (thumbnails, video playback/download) uses presigned URLs. Upload stores only S3 keys (`storageKey`, `thumbnailKey`), never public URLs. Games and Videos API endpoints generate 1-hour presigned download URLs via `getSignedDownloadUrl()` when serving responses — both `thumbnailUrl` and `storageUrl` fields contain presigned URLs. Batch-signing avoids N+1 per-video overhead. No S3 bucket ACL or policy changes needed.
 
 ### Placeholder / Incomplete
 
@@ -1500,5 +1500,51 @@ This ensures continuity across sessions and prevents redundant work.
 - `apps/api/src/routes/v1/videos/routes.ts` — Added `getSignedDownloadUrl` import, list and detail endpoints generate presigned thumbnail URLs
 - `apps/api/src/routes/v1/uploads/routes.ts` — Restored `t.File()` body schema, stores only `thumbnailKey` (not `thumbnailUrl`)
 - `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 26 — 2026-02-12
+
+**Focus:** Fix 4 consistency/cleanup issues — presigned URLs for videos, localStorage removal, remove auto job scheduling, thumbnail validation
+
+**Completed:**
+
+1. **Presigned URLs for video playback** — `apps/api/src/routes/v1/videos/routes.ts` and `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Video list endpoint now batch-signs both `thumbnailKey` and `storageKey` S3 keys, returning presigned URLs in `thumbnailUrl` and `storageUrl` response fields
+   - Video detail endpoint generates presigned `storageUrl` from `storageKey` (was previously only doing thumbnails)
+   - Upload `/complete` endpoint no longer stores a public URL in `storageUrl` — the `storageKey` (set during `/init`) is the only S3 reference needed; presigned URLs are generated on read
+   - Deprecated `getPublicUrl()` helper in `apps/api/src/lib/s3.ts` with JSDoc `@deprecated` tag
+   - Removed `CacheControl: "public, ..."` from `uploadThumbnail()` since bucket is private
+
+2. **Removed localStorage persistence** — `apps/web/app/lib/upload-store.tsx`:
+   - Deleted the `persistActiveIds()` function entirely and all 3 call sites (`updateProgress`, `cancelUpload`, `dismissUpload`)
+   - Upload state was written to `localStorage` under `fudl:active-uploads` but never read back — dead code
+   - Upload state remains ephemeral (session-only via React context). Resuming interrupted uploads is handled by the UploadManager checking the `/upload/status` API endpoint
+
+3. **Removed automatic job scheduling from `/complete`** — `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Removed `videoProcessingQueue.add()` call and subsequent `prisma.video.update()` for `jobId`
+   - Removed `videoProcessingQueue` import from `../../../lib/queues`
+   - Removed `S3_BUCKET` and `S3_REGION` imports (were only used for job data)
+   - Video status stays at `UPLOADED` — coaches will manually trigger analysis when ready
+   - Response no longer includes `storageUrl` or `jobId` — just `{ completed: true }`
+
+4. **Thumbnail upload schema validation** — `apps/api/src/routes/v1/uploads/routes.ts`:
+   - Changed `t.File()` to `t.File({ maxSize: "5m", type: ["image/jpeg", "image/png", "image/webp"] })` — Elysia now rejects oversized or wrong-type files at the framework level before the handler runs
+   - Removed redundant manual size check (`data.length > 5 * 1024 * 1024`) and MIME type check from the handler body — these are now enforced by the schema
+   - Kept the empty-file check (`data.length === 0`) as a handler-level safety net
+
+**Key decisions:**
+
+- **`getPublicUrl()` deprecated, not removed** — It may still be useful for non-auth contexts (e.g., admin debugging). Marked `@deprecated` with a note to use `getSignedDownloadUrl()`.
+- **No localStorage at all** — The original intent was "diagnostic purposes" but diagnostic data that's never read serves no purpose. If cross-device upload awareness is needed in the future, it should be API-driven (query the `/upload/status` endpoint for in-progress uploads).
+- **No job on upload completion** — The processing pipeline (clip splitting, AI analysis, etc.) will be triggered explicitly by coaches in a future feature. This prevents the stub worker from creating permanently stuck `PROCESSING` states and gives coaches control over when/what to analyze.
+- **Schema-level validation for thumbnails** — Elysia's `t.File()` supports `maxSize` and `type` constraints natively. This provides a cleaner error response (422 Validation Error) and prevents the handler from even executing for invalid files.
+
+**Files modified:**
+
+- `apps/api/src/lib/s3.ts` — Deprecated `getPublicUrl()`, removed `CacheControl` from `uploadThumbnail()`, simplified return type
+- `apps/api/src/routes/v1/uploads/routes.ts` — Removed job scheduling, removed `getPublicUrl`/queue imports, schema-validated thumbnail upload, simplified `/complete` response
+- `apps/api/src/routes/v1/videos/routes.ts` — Batch-sign `storageKey` in list endpoint, sign `storageKey` in detail endpoint
+- `apps/web/app/lib/upload-store.tsx` — Removed `persistActiveIds()` and all localStorage interaction
 
 **Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
