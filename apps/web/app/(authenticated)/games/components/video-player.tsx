@@ -177,6 +177,12 @@ export function VideoPlayer({
         actions.togglePlay();
       }, 250);
     }
+    return () => {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+    };
   }, [actions]);
 
   if (!activeVideo) return null;

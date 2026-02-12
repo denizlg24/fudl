@@ -34,18 +34,12 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
   .get(
     "/",
     async ({ params, query }) => {
-      const where: Record<string, unknown> = {
-        organizationId: params.organizationId,
-      };
-      if (query.seasonId) {
-        where.seasonId = query.seasonId;
-      }
-      if (query.tagId) {
-        where.tags = { some: { tagId: query.tagId } };
-      }
-
       const games = await prisma.game.findMany({
-        where,
+        where: {
+          organizationId: params.organizationId,
+          ...(query.seasonId && { seasonId: query.seasonId }),
+          ...(query.tagId && { tags: { some: { tagId: query.tagId } } }),
+        },
         orderBy: { date: "desc" },
         include: {
           season: { select: { id: true, name: true } },
