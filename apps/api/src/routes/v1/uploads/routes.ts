@@ -6,9 +6,10 @@
  *   1. POST /init        — Create S3 multipart upload + UploadSession in DB
  *   2. POST /sign-part   — Get presigned URL for a single part
  *   3. POST /complete-part — Record a completed part (ETag + partNumber)
- *   4. POST /complete    — Finalize S3 multipart upload, queue processing job
+ *   4. POST /complete    — Finalize S3 multipart upload
  *   5. POST /abort       — Cancel upload, clean up S3 + DB
  *   6. GET  /status      — Check upload progress (for resumption)
+ *   7. POST /thumbnail   — Upload a client-extracted thumbnail image
  */
 
 import { Elysia, t } from "elysia";
@@ -16,16 +17,12 @@ import { prisma } from "@repo/db";
 import { authPlugin, ApiError } from "../../../middleware";
 import {
   getVideoKey,
-  getPublicUrl,
   createMultipartUpload,
   signUploadPart,
   completeMultipartUpload as s3CompleteMultipart,
   abortMultipartUpload as s3AbortMultipart,
   uploadThumbnail,
-  S3_BUCKET,
-  S3_REGION,
 } from "../../../lib/s3";
-import { videoProcessingQueue } from "../../../lib/queues";
 
 /** Default part size: 10 MB */
 const DEFAULT_PART_SIZE = 10 * 1024 * 1024;
@@ -50,7 +47,7 @@ export const uploadRoutes = new Elysia({
   // -------------------------------------------------------------------------
   .post(
     "/init",
-    async ({ params, body}) => {
+    async ({ params, body }) => {
       const { organizationId, videoId } = params;
 
       // Validate video exists, belongs to org, and is in uploadable state
@@ -336,7 +333,7 @@ export const uploadRoutes = new Elysia({
   .post(
     "/complete",
     async ({ params }) => {
-      const { organizationId, videoId } = params;
+      const { videoId } = params;
 
       const session = await prisma.uploadSession.findUnique({
         where: { videoId },
@@ -365,14 +362,12 @@ export const uploadRoutes = new Elysia({
         completedParts,
       );
 
-      const storageUrl = getPublicUrl(session.s3Key);
-
-      // Update video record
+      // Update video record — store only the S3 key, not a public URL.
+      // Presigned URLs are generated on read for video playback/download.
       await prisma.video.update({
         where: { id: videoId },
         data: {
           status: "UPLOADED",
-          storageUrl,
           fileSize: session.totalBytes,
         },
       });
@@ -382,37 +377,8 @@ export const uploadRoutes = new Elysia({
         where: { videoId },
       });
 
-      // Queue video processing job (thumbnail + metadata extraction)
-      const job = await videoProcessingQueue.add(
-        "process-video",
-        {
-          videoId,
-          organizationId,
-          s3Key: session.s3Key,
-          s3Bucket: S3_BUCKET,
-          s3Region: S3_REGION,
-        },
-        {
-          jobId: `process-${videoId}`,
-        },
-      );
-
-      // Update video with job ID
-      // Keep status as UPLOADED — the worker will transition to PROCESSING
-      // when it picks up the job, and then to COMPLETED when done.
-      // Until the worker is fully implemented, this prevents videos from
-      // being stuck in PROCESSING forever.
-      await prisma.video.update({
-        where: { id: videoId },
-        data: {
-          jobId: job.id,
-        },
-      });
-
       return {
         completed: true,
-        storageUrl,
-        jobId: job.id,
       };
     },
     {
@@ -442,7 +408,6 @@ export const uploadRoutes = new Elysia({
       }
 
       const file = body.file;
-
       const arrayBuffer = await file.arrayBuffer();
       const data = new Uint8Array(arrayBuffer);
 
@@ -450,19 +415,7 @@ export const uploadRoutes = new Elysia({
         throw new ApiError(400, "Empty file");
       }
 
-      if (data.length > 5 * 1024 * 1024) {
-        throw new ApiError(400, "File too large (max 5MB)");
-      }
-
-      const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
       const contentType = file.type || "image/jpeg";
-
-      if (!ALLOWED_IMAGE_TYPES.includes(contentType)) {
-        throw new ApiError(
-          400,
-          `Invalid image type '${contentType}'. Allowed: ${ALLOWED_IMAGE_TYPES.join(", ")}`,
-        );
-      }
 
       // Upload to S3
       const { key } = await uploadThumbnail(
@@ -472,7 +425,7 @@ export const uploadRoutes = new Elysia({
         contentType,
       );
 
-      // Update video record with thumbnail key (no public URL — presigned URLs generated on read)
+      // Update video record with thumbnail key (presigned URLs generated on read)
       await prisma.video.update({
         where: { id: videoId },
         data: {
@@ -489,7 +442,10 @@ export const uploadRoutes = new Elysia({
         videoId: t.String(),
       }),
       body: t.Object({
-        file: t.File(),
+        file: t.File({
+          maxSize: "5m",
+          type: ["image/jpeg", "image/png", "image/webp"],
+        }),
       }),
     },
   )

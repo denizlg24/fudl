@@ -60,18 +60,17 @@ export const videoRoutes = new Elysia({
         },
       });
 
-      // Batch-sign all thumbnail keys in a single Promise.all to avoid
-      // N+1 per-video signing calls that dominate response time.
-      const thumbnailKeys = new Set<string>();
+      // Batch-sign all S3 keys (thumbnails + video files) in a single
+      // Promise.all to avoid N+1 per-video signing calls.
+      const keysToSign = new Set<string>();
       for (const video of videos) {
-        if (video.thumbnailKey) {
-          thumbnailKeys.add(video.thumbnailKey);
-        }
+        if (video.thumbnailKey) keysToSign.add(video.thumbnailKey);
+        if (video.storageKey) keysToSign.add(video.storageKey);
       }
 
       const signedUrlMap = new Map<string, string>();
-      if (thumbnailKeys.size > 0) {
-        const entries = Array.from(thumbnailKeys);
+      if (keysToSign.size > 0) {
+        const entries = Array.from(keysToSign);
         const signedUrls = await Promise.all(
           entries.map((key) => getSignedDownloadUrl(key, 3600)),
         );
@@ -87,6 +86,9 @@ export const videoRoutes = new Elysia({
         thumbnailUrl: video.thumbnailKey
           ? (signedUrlMap.get(video.thumbnailKey) ?? null)
           : video.thumbnailUrl,
+        storageUrl: video.storageKey
+          ? (signedUrlMap.get(video.storageKey) ?? null)
+          : video.storageUrl,
       }));
 
       return { videos: videosWithTags };
@@ -224,6 +226,10 @@ export const videoRoutes = new Elysia({
           thumbnailUrl: video.thumbnailKey
             ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
             : video.thumbnailUrl,
+          // Generate a presigned URL for video playback/download
+          storageUrl: video.storageKey
+            ? await getSignedDownloadUrl(video.storageKey, 3600)
+            : video.storageUrl,
         },
       };
     },

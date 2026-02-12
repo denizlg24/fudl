@@ -8,9 +8,9 @@
  * - Persistent tracking across page navigation (state lives in context, not per-page)
  * - Integration with the UploadManager singleton
  *
- * Note: localStorage is used to store active upload IDs for diagnostic purposes
- * only. Upload state is not restored from localStorage on reload — resuming
- * interrupted uploads requires calling the /upload/status API endpoint.
+ * Upload state is ephemeral — it exists only for the current browser session.
+ * Resuming interrupted uploads (e.g., after page reload) requires calling the
+ * /upload/status API endpoint, which the UploadManager handles automatically.
  */
 
 import {
@@ -67,7 +67,7 @@ interface UploadStore {
 
 function createUploadStore(): UploadStore {
   let uploads = new Map<string, UploadEntry>();
-  let listeners = new Set<() => void>();
+  const listeners = new Set<() => void>();
   // Cached snapshot — only recreated when the map changes
   let cachedSnapshot: UploadEntry[] = [];
 
@@ -76,31 +76,6 @@ function createUploadStore(): UploadStore {
     cachedSnapshot = Array.from(uploads.values());
     for (const listener of listeners) {
       listener();
-    }
-  }
-
-  function persistActiveIds() {
-    if (typeof window === "undefined") return;
-    const activeIds: Array<{ videoId: string; organizationId: string }> = [];
-    for (const entry of uploads.values()) {
-      if (
-        entry.progress.status === "uploading" ||
-        entry.progress.status === "initializing"
-      ) {
-        activeIds.push({
-          videoId: entry.videoId,
-          organizationId: entry.organizationId,
-        });
-      }
-    }
-    try {
-      if (activeIds.length > 0) {
-        localStorage.setItem("fudl:active-uploads", JSON.stringify(activeIds));
-      } else {
-        localStorage.removeItem("fudl:active-uploads");
-      }
-    } catch {
-      // localStorage may be unavailable
     }
   }
 
@@ -117,7 +92,6 @@ function createUploadStore(): UploadStore {
       file: existing?.file,
       progress,
     });
-    persistActiveIds();
     emitChange();
   }
 
@@ -169,7 +143,6 @@ function createUploadStore(): UploadStore {
           ...entry,
           progress: { ...entry.progress, status: "cancelled" },
         });
-        persistActiveIds();
         emitChange();
       }
     },
@@ -224,7 +197,6 @@ function createUploadStore(): UploadStore {
     dismissUpload(videoId: string) {
       uploads = new Map(uploads);
       uploads.delete(videoId);
-      persistActiveIds();
       emitChange();
     },
 
