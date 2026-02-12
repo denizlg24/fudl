@@ -82,6 +82,7 @@ export const videoRoutes = new Elysia({
 
       const videosWithTags = videos.map((video) => ({
         ...video,
+        fileSize: video.fileSize?.toString() ?? null,
         tags: video.tags.map((entry) => entry.tag),
         thumbnailUrl: video.thumbnailKey
           ? (signedUrlMap.get(video.thumbnailKey) ?? null)
@@ -164,6 +165,7 @@ export const videoRoutes = new Elysia({
       return {
         video: {
           ...video,
+          fileSize: video.fileSize?.toString() ?? null,
           tags: video.tags.map((entry) => entry.tag),
         },
       };
@@ -217,6 +219,7 @@ export const videoRoutes = new Elysia({
       return {
         video: {
           ...video,
+          fileSize: video.fileSize?.toString() ?? null,
           tags: video.tags.map((entry) => entry.tag),
           thumbnailUrl: video.thumbnailKey
             ? await getSignedDownloadUrl(video.thumbnailKey, 3600)
@@ -303,6 +306,7 @@ export const videoRoutes = new Elysia({
       return {
         video: {
           ...video,
+          fileSize: video.fileSize?.toString() ?? null,
           tags: video.tags.map((entry) => entry.tag),
         },
       };

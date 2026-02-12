@@ -4,12 +4,6 @@ import { config } from "./config";
 import { errorHandler } from "./middleware";
 import { v1Routes } from "./routes";
 
-// Enable BigInt JSON serialization (Prisma returns BigInt for large integer columns)
-// biome-ignore lint/suspicious/noGlobalAssign: Required for JSON.stringify compatibility
-(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
-  return this.toString();
-};
-
 const app = new Elysia()
   .use(errorHandler)
   .use(

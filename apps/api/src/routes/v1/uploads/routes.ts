@@ -50,7 +50,7 @@ export const uploadRoutes = new Elysia({
   // -------------------------------------------------------------------------
   .post(
     "/init",
-    async ({ params, body, user }) => {
+    async ({ params, body}) => {
       const { organizationId, videoId } = params;
 
       // Validate video exists, belongs to org, and is in uploadable state

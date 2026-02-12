@@ -221,6 +221,10 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
         game: {
           ...game,
           tags: game.tags.map((entry) => entry.tag),
+          videos: game.videos.map((video) => ({
+            ...video,
+            fileSize: video.fileSize?.toString() ?? null,
+          })),
         },
       };
     },
