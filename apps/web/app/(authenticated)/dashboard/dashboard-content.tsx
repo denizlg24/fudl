@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { isCoachRole } from "@repo/types";
+import { useActiveUploadCount } from "../../lib/upload-store";
 import { Button } from "@repo/ui/components/button";
 import {
   Select,
@@ -38,7 +39,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@repo/ui/components/empty";
-import { toast } from "sonner";
 import {
   Upload,
   Film,
@@ -47,11 +47,18 @@ import {
   Play,
   Check,
   Plus,
+  Layers,
+  X,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { clientEnv } from "@repo/env/web";
 
 const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export interface GameVideo {
   id: string;
@@ -59,14 +66,21 @@ export interface GameVideo {
   thumbnailUrl?: string | null;
 }
 
+export interface TagData {
+  id: string;
+  name: string;
+  category: string;
+}
+
 export interface GameData {
   id: string;
-  opponent: string | null;
+  title: string;
   date: string | null;
   location: string | null;
   notes: string | null;
-  seasonId: string | null;
+  seasonId: string;
   season?: { id: string; name: string } | null;
+  tags?: TagData[];
   videos?: GameVideo[];
   createdAt: string;
 }
@@ -74,6 +88,23 @@ export interface GameData {
 export interface SeasonData {
   id: string;
   name: string;
+}
+
+type GroupBy = "none" | "season" | "opponent" | "both";
+
+interface GameGroup {
+  key: string;
+  label: string;
+  games: GameData[];
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getOpponentName(game: GameData): string | null {
+  const opponentTag = game.tags?.find((t) => t.category === "OPPONENT");
+  return opponentTag?.name ?? null;
 }
 
 function formatDate(dateStr: string | null): string {
@@ -86,6 +117,93 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
+function groupGames(games: GameData[], groupBy: GroupBy): GameGroup[] {
+  if (groupBy === "none") {
+    return [{ key: "all", label: "", games }];
+  }
+
+  if (groupBy === "season") {
+    const groups = new Map<string, GameData[]>();
+    const labelMap = new Map<string, string>();
+
+    for (const game of games) {
+      const key = game.seasonId;
+      const label = game.season?.name ?? "Unknown Season";
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        labelMap.set(key, label);
+      }
+      groups.get(key)!.push(game);
+    }
+
+    return Array.from(groups.entries()).map(([key, groupGames]) => ({
+      key,
+      label: labelMap.get(key) ?? "Unknown Season",
+      games: groupGames,
+    }));
+  }
+
+  if (groupBy === "opponent") {
+    const groups = new Map<string, GameData[]>();
+
+    for (const game of games) {
+      const opponent = getOpponentName(game) ?? "No Opponent";
+      if (!groups.has(opponent)) {
+        groups.set(opponent, []);
+      }
+      groups.get(opponent)!.push(game);
+    }
+
+    return Array.from(groups.entries()).map(([opponent, groupGames]) => ({
+      key: opponent,
+      label: `vs. ${opponent}`,
+      games: groupGames,
+    }));
+  }
+
+  // "both" — group by season first, then by opponent within each season
+  const seasonGroups = new Map<
+    string,
+    { label: string; opponentGroups: Map<string, GameData[]> }
+  >();
+
+  for (const game of games) {
+    const seasonKey = game.seasonId;
+    const seasonLabel = game.season?.name ?? "Unknown Season";
+    const opponent = getOpponentName(game) ?? "No Opponent";
+
+    if (!seasonGroups.has(seasonKey)) {
+      seasonGroups.set(seasonKey, {
+        label: seasonLabel,
+        opponentGroups: new Map(),
+      });
+    }
+
+    const season = seasonGroups.get(seasonKey)!;
+    if (!season.opponentGroups.has(opponent)) {
+      season.opponentGroups.set(opponent, []);
+    }
+    season.opponentGroups.get(opponent)!.push(game);
+  }
+
+  const result: GameGroup[] = [];
+  for (const [seasonKey, season] of seasonGroups) {
+    for (const [opponent, groupGames] of season.opponentGroups) {
+      result.push({
+        key: `${seasonKey}__${opponent}`,
+        label: `${season.label} — vs. ${opponent}`,
+        games: groupGames,
+      });
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
 function GameThumbnail({ videos }: { videos?: GameVideo[] }) {
   const hasVideo = videos && videos.length > 0;
   const thumbnailUrl = hasVideo
@@ -95,7 +213,13 @@ function GameThumbnail({ videos }: { videos?: GameVideo[] }) {
   if (thumbnailUrl) {
     return (
       <div className="relative rounded-lg overflow-hidden bg-muted shrink-0 w-32 h-18 sm:w-40 sm:h-22.5 group">
-        <Image src={thumbnailUrl} alt={"Game thumbnail"} width={640} height={360} className="w-full h-full object-cover" />
+        <Image
+          src={thumbnailUrl}
+          alt={"Game thumbnail"}
+          width={640}
+          height={360}
+          className="w-full h-full object-cover"
+        />
         <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
           <div className="size-8 rounded-full bg-white/90 flex items-center justify-center">
             <Play className="size-4 text-black fill-black ml-0.5" />
@@ -128,9 +252,11 @@ function GameThumbnail({ videos }: { videos?: GameVideo[] }) {
 function VideoStatusLine({
   videos,
   isCoach,
+  gameId,
 }: {
   videos?: GameVideo[];
   isCoach: boolean;
+  gameId: string;
 }) {
   if (!videos || videos.length === 0) {
     if (!isCoach) {
@@ -141,16 +267,13 @@ function VideoStatusLine({
     return (
       <span className="text-sm text-muted-foreground">
         No footage yet{" "}
-        <button
-          type="button"
+        <Link
+          href={`/upload?gameId=${gameId}`}
           className="text-primary hover:underline"
-          onClick={(e) => {
-            e.stopPropagation();
-            toast.info("Video upload coming soon.");
-          }}
+          onClick={(e) => e.stopPropagation()}
         >
           Upload
-        </button>
+        </Link>
       </span>
     );
   }
@@ -202,7 +325,7 @@ function GameCard({
 
   return (
     <div
-      className="flex gap-4 py-4 border-b border-border hover:bg-accent/50 transition-colors duration-150 cursor-pointer px-1 -mx-1 rounded-sm"
+      className="flex gap-4 py-4 rounded-b-none hover:rounded-b-sm border-b border-border hover:bg-accent/50 transition-colors duration-150 cursor-pointer px-1 -mx-1 rounded-sm"
       onClick={() => router.push(`/games/${game.id}`)}
       role="link"
       tabIndex={0}
@@ -214,11 +337,13 @@ function GameCard({
 
       <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
         <span className="text-base font-medium text-foreground truncate">
-          {game.opponent ? (
-            `vs. ${game.opponent}`
-          ) : (
-            <span className="text-muted-foreground italic">Untitled game</span>
-          )}
+          {getOpponentName(game)
+            ? `vs. ${getOpponentName(game)}`
+            : game.title || (
+                <span className="text-muted-foreground italic">
+                  Untitled game
+                </span>
+              )}
         </span>
 
         {metaParts.length > 0 && (
@@ -227,7 +352,11 @@ function GameCard({
           </span>
         )}
 
-        <VideoStatusLine videos={game.videos} isCoach={isCoach} />
+        <VideoStatusLine
+          videos={game.videos}
+          isCoach={isCoach}
+          gameId={game.id}
+        />
       </div>
 
       <div
@@ -259,7 +388,7 @@ function GameCard({
             {isCoach && (
               <>
                 <DropdownMenuItem
-                  onClick={() => toast.info("Video upload coming soon.")}
+                  onClick={() => router.push(`/upload?gameId=${game.id}`)}
                 >
                   Upload video
                 </DropdownMenuItem>
@@ -278,9 +407,11 @@ function GameCard({
                       <AlertDialogTitle>Delete this game?</AlertDialogTitle>
                       <AlertDialogDescription>
                         This will permanently delete the game
-                        {game.opponent ? ` vs. ${game.opponent}` : ""} and all
-                        associated videos and analysis data. This action cannot
-                        be undone.
+                        {getOpponentName(game)
+                          ? ` vs. ${getOpponentName(game)}`
+                          : ` "${game.title}"`}{" "}
+                        and all associated videos and analysis data. This action
+                        cannot be undone.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -303,6 +434,10 @@ function GameCard({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function DashboardContent({
   initialGames,
   seasons,
@@ -319,7 +454,39 @@ export function DashboardContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [games, setGames] = useState(initialGames);
+  const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const isCoach = isCoachRole(role);
+  const activeUploadCount = useActiveUploadCount();
+  const prevActiveCountRef = useRef(activeUploadCount);
+
+  // Reload games from the API
+  const reloadGames = useCallback(async () => {
+    const seasonParam =
+      seasonFilter !== "all" ? `?seasonId=${seasonFilter}` : "";
+    const res = await fetch(
+      `${API_URL}/orgs/${activeOrgId}/games${seasonParam}`,
+      { credentials: "include" },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      setGames(data.games || []);
+    }
+  }, [activeOrgId, seasonFilter]);
+
+  // Refresh games when all uploads complete (active count drops to 0)
+  useEffect(() => {
+    const prevCount = prevActiveCountRef.current;
+    prevActiveCountRef.current = activeUploadCount;
+
+    if (prevCount > 0 && activeUploadCount === 0) {
+      reloadGames();
+    }
+  }, [activeUploadCount, reloadGames]);
+
+  // Sync with server-rendered data when initialGames changes
+  useEffect(() => {
+    setGames(initialGames);
+  }, [initialGames]);
 
   const handleSeasonChange = (value: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -331,22 +498,27 @@ export function DashboardContent({
     router.push(`/dashboard?${params.toString()}`);
   };
 
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const handleDeleteGame = useCallback(
     async (gameId: string) => {
+      setDeleteError(null);
       const res = await fetch(
         `${API_URL}/orgs/${activeOrgId}/games/${gameId}`,
         { method: "DELETE", credentials: "include" },
       );
 
       if (res.ok) {
-        toast.success("Game deleted");
         setGames((prev) => prev.filter((g) => g.id !== gameId));
       } else {
-        toast.error("Failed to delete game");
+        setDeleteError("Failed to delete game. Please try again.");
       }
     },
     [activeOrgId],
   );
+
+  // Grouped games (memoized to avoid recomputation on every render)
+  const groups = useMemo(() => groupGames(games, groupBy), [games, groupBy]);
 
   // Quick stats
   const totalGames = games.length;
@@ -361,7 +533,27 @@ export function DashboardContent({
       <div className="flex items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Games</h1>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Group by selector */}
+          {games.length > 0 && (
+            <Select
+              value={groupBy}
+              onValueChange={(v) => setGroupBy(v as GroupBy)}
+            >
+              <SelectTrigger className="w-36 h-9">
+                <Layers className="size-3.5 mr-1.5 text-muted-foreground" />
+                <SelectValue placeholder="Group by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No group</SelectItem>
+                <SelectItem value="season">By season</SelectItem>
+                <SelectItem value="opponent">By opponent</SelectItem>
+                <SelectItem value="both">Season + opponent</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Season filter */}
           {seasons.length > 0 && (
             <Select value={seasonFilter} onValueChange={handleSeasonChange}>
               <SelectTrigger className="w-40 h-9">
@@ -377,11 +569,9 @@ export function DashboardContent({
               </SelectContent>
             </Select>
           )}
+
           {isCoach && (
-            <Button
-              onClick={() => toast.info("Video upload coming soon.")}
-              className="gap-2"
-            >
+            <Button onClick={() => router.push("/upload")} className="gap-2">
               <Upload className="size-4" />
               <span className="hidden sm:inline">Upload video</span>
             </Button>
@@ -408,6 +598,21 @@ export function DashboardContent({
         </p>
       )}
 
+      {/* Delete Error Banner */}
+      {deleteError && (
+        <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center justify-between">
+          <span>{deleteError}</span>
+          <button
+            type="button"
+            onClick={() => setDeleteError(null)}
+            className="ml-4 text-destructive/70 hover:text-destructive"
+            aria-label="Dismiss error"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
+
       {/* Game List */}
       {games.length === 0 ? (
         <Empty className="min-h-100">
@@ -427,7 +632,7 @@ export function DashboardContent({
             {isCoach ? (
               <>
                 <Button
-                  onClick={() => toast.info("Video upload coming soon.")}
+                  onClick={() => router.push("/upload")}
                   className="gap-2"
                 >
                   <Upload className="size-4" />
@@ -435,7 +640,7 @@ export function DashboardContent({
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => toast.info("Game creation coming soon.")}
+                  onClick={() => router.push("/upload")}
                   className="gap-2"
                 >
                   <Plus className="size-4" />
@@ -450,14 +655,33 @@ export function DashboardContent({
           </EmptyContent>
         </Empty>
       ) : (
-        <div>
-          {games.map((game) => (
-            <GameCard
-              key={game.id}
-              game={game}
-              onDelete={handleDeleteGame}
-              isCoach={isCoach}
-            />
+        <div className="space-y-6">
+          {groups.map((group) => (
+            <div key={group.key}>
+              {/* Section header (only shown when grouping is active) */}
+              {groupBy !== "none" && (
+                <div className="flex items-center gap-3 mb-2">
+                  <h2 className="text-sm font-medium text-muted-foreground">
+                    {group.label}
+                  </h2>
+                  <span className="text-xs text-muted-foreground/60">
+                    {group.games.length} game
+                    {group.games.length !== 1 ? "s" : ""}
+                  </span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+              )}
+              <div>
+                {group.games.map((game) => (
+                  <GameCard
+                    key={game.id}
+                    game={game}
+                    onDelete={handleDeleteGame}
+                    isCoach={isCoach}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

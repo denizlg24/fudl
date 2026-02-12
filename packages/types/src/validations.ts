@@ -228,13 +228,8 @@ export type UpdateSeasonValues = z.infer<typeof updateSeasonSchema>;
 
 export const createGameSchema = z.object({
   title: trimmedString(1, 200, "Game title"),
-  seasonId: z.string().optional(),
-  opponent: z
-    .string()
-    .trim()
-    .max(200, "Opponent must be at most 200 characters")
-    .optional(),
-  date: z.string().datetime().optional(),
+  seasonId: z.string().min(1, "Season is required"),
+  date: z.string().date().optional(),
   location: z
     .string()
     .trim()
@@ -245,16 +240,21 @@ export const createGameSchema = z.object({
     .trim()
     .max(2000, "Notes must be at most 2000 characters")
     .optional(),
+  tagIds: z.array(z.string()).optional(),
 });
+
+export type CreateGameValues = z.infer<typeof createGameSchema>;
 
 export const updateGameSchema = z.object({
   title: trimmedString(1, 200, "Game title").optional(),
-  seasonId: z.string().nullable().optional(),
-  opponent: z.string().trim().max(200).nullable().optional(),
-  date: z.string().datetime().nullable().optional(),
+  seasonId: z.string().min(1, "Season is required").optional(),
+  date: z.string().date().nullable().optional(),
   location: z.string().trim().max(200).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
+  tagIds: z.array(z.string()).optional(),
 });
+
+export type UpdateGameValues = z.infer<typeof updateGameSchema>;
 
 const ALLOWED_VIDEO_MIME_TYPES = [
   "video/mp4",
@@ -271,12 +271,18 @@ export const createVideoSchema = z.object({
     .enum(ALLOWED_VIDEO_MIME_TYPES as unknown as [string, ...string[]])
     .optional(),
   fileSize: z.number().int().min(0).optional(),
+  tagIds: z.array(z.string()).optional(),
 });
+
+export type CreateVideoValues = z.infer<typeof createVideoSchema>;
 
 export const updateVideoSchema = z.object({
   title: trimmedString(1, 200, "Video title").optional(),
   gameId: z.string().nullable().optional(),
+  tagIds: z.array(z.string()).optional(),
 });
+
+export type UpdateVideoValues = z.infer<typeof updateVideoSchema>;
 
 export const analysisVideoSchema = z.object({
   videoUrl: z.string().url("Must be a valid URL"),

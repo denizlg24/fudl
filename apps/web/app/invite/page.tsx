@@ -14,7 +14,6 @@ import {
 } from "@repo/ui/components/card";
 import { Spinner } from "@repo/ui/components/spinner";
 import Link from "next/link";
-import { toast } from "sonner";
 import { clientEnv } from "@repo/env/web";
 
 const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
@@ -90,7 +89,6 @@ function TokenInviteFlow({ token }: { token: string }) {
       }
 
       setAccepted(true);
-      toast.success("Welcome to the team! Redirecting to dashboard...");
       setTimeout(() => {
         router.push("/dashboard");
       }, 1500);
@@ -284,7 +282,6 @@ function EmailInviteFlow({ invitationId }: { invitationId: string | null }) {
       }
 
       setAccepted(true);
-      toast.success("Invitation accepted! Redirecting to dashboard...");
 
       setTimeout(() => {
         router.push("/dashboard");
@@ -451,7 +448,6 @@ function EmailInviteFlow({ invitationId }: { invitationId: string | null }) {
                   await authClient.organization.rejectInvitation({
                     invitationId: invitation.id,
                   });
-                  toast.success("Invitation declined");
                   setInvitations((prev) =>
                     prev.filter((i) => i.id !== invitation.id),
                   );

@@ -152,7 +152,7 @@ export const seasonRoutes = new Elysia({
 
   /**
    * DELETE /orgs/:organizationId/seasons/:seasonId
-   * Delete a season (games are preserved with seasonId set to null)
+   * Delete a season. Fails if the season has any games (restrict delete).
    */
   .delete(
     "/:seasonId",
@@ -162,10 +162,18 @@ export const seasonRoutes = new Elysia({
           id: params.seasonId,
           organizationId: params.organizationId,
         },
+        include: { _count: { select: { games: true } } },
       });
 
       if (!existing) {
         throw new ApiError(404, "Season not found");
+      }
+
+      if (existing._count.games > 0) {
+        throw new ApiError(
+          400,
+          `Cannot delete a season that has ${existing._count.games} game${existing._count.games !== 1 ? "s" : ""}. Move or delete the games first.`,
+        );
       }
 
       await prisma.season.delete({

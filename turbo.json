@@ -15,7 +15,11 @@
     "PORT",
     "NEXT_PUBLIC_API_URL",
     "RESEND_API_KEY",
-    "EMAIL_FROM"
+    "EMAIL_FROM",
+    "AWS_S3_BUCKET",
+    "AWS_S3_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY"
   ],
   "tasks": {
     "build": {

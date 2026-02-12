@@ -59,7 +59,6 @@ import {
 import { Textarea } from "@repo/ui/components/textarea";
 import { useTheme } from "next-themes";
 import Link from "next/link";
-import { toast } from "sonner";
 import { DatePicker } from "@repo/ui/components/date-picker";
 import {
   ChevronLeft,
@@ -195,40 +194,44 @@ export function ProfileSettingsContent({
         message.toLowerCase().includes("date") ||
         message.toLowerCase().includes("datetime")
       ) {
-        toast.error(
-          "Invalid date format. Please use the date picker to select a valid date.",
-        );
+        profileForm.setError("root", {
+          message:
+            "Invalid date format. Please use the date picker to select a valid date.",
+        });
       } else {
-        toast.error(message);
+        profileForm.setError("root", { message });
       }
       return;
     }
-    toast.success("Profile saved");
     profileForm.reset(values);
   };
 
   // ---------- Email change ----------
   const [emailValue, setEmailValue] = useState(initialEmail);
   const [savingEmail, setSavingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
 
   const handleSaveEmail = async () => {
     if (!emailValue || emailValue === initialEmail) return;
     // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(emailValue)) {
-      toast.error("Enter a valid email address");
+      setEmailError("Enter a valid email address");
       return;
     }
+    setEmailError(null);
+    setEmailSuccess(null);
     setSavingEmail(true);
     try {
       const { error } = await authClient.changeEmail({
         newEmail: emailValue,
       });
       if (error) {
-        toast.error(error.message || "Failed to update email");
+        setEmailError(error.message || "Failed to update email");
         return;
       }
-      toast.success(
+      setEmailSuccess(
         `Verification email sent to ${emailValue}. Please check your inbox.`,
       );
     } finally {
@@ -259,7 +262,6 @@ export function ProfileSettingsContent({
       });
       return;
     }
-    toast.success("Password updated");
     setPasswordOpen(false);
     passwordForm.reset();
   };
@@ -271,16 +273,18 @@ export function ProfileSettingsContent({
     router.refresh();
   };
 
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const handleLeaveOrg = async (orgId: string) => {
+    setActionError(null);
     const { error } = await authClient.organization.removeMember({
       memberIdOrEmail: initialEmail,
       organizationId: orgId,
     });
     if (error) {
-      toast.error(error.message || "Failed to leave team");
+      setActionError(error.message || "Failed to leave team");
       return;
     }
-    toast.success("You have left the team");
     setOrgsList((prev) => prev.filter((o) => o.id !== orgId));
   };
 
@@ -289,21 +293,25 @@ export function ProfileSettingsContent({
 
   const soleOwnedOrgNames = initialData.soleOwnedOrgNames;
 
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+
   const handleDeleteAccount = async () => {
     setIsDeleting(true);
+    setDeleteError(null);
+    setDeleteSuccess(null);
     try {
       const { error } = await authClient.deleteUser({});
       if (error) {
-        toast.error(error.message || "Failed to initiate account deletion");
+        setDeleteError(error.message || "Failed to initiate account deletion");
         return;
       }
-      toast.success(
-        "Check your email — click the confirmation link to complete account deletion.",
-        { duration: 10000 },
+      setDeleteSuccess(
+        "Check your email \u2014 click the confirmation link to complete account deletion.",
       );
       setDeleteConfirmText("");
     } catch {
-      toast.error("Failed to initiate account deletion");
+      setDeleteError("Failed to initiate account deletion");
     } finally {
       setIsDeleting(false);
     }
@@ -379,6 +387,12 @@ export function ProfileSettingsContent({
 
           <Separator className="mb-6" />
 
+          {profileForm.formState.errors.root && (
+            <p className="text-sm text-destructive mb-4">
+              {profileForm.formState.errors.root.message}
+            </p>
+          )}
+
           <Form {...profileForm}>
             <form className="space-y-6">
               {/* Display name */}
@@ -430,6 +444,14 @@ export function ProfileSettingsContent({
                 <p className="text-xs text-muted-foreground">
                   Changing your email will require re-verification.
                 </p>
+                {emailError && (
+                  <p className="text-sm text-destructive">{emailError}</p>
+                )}
+                {emailSuccess && (
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    {emailSuccess}
+                  </p>
+                )}
               </div>
 
               {/* Bio */}
@@ -908,6 +930,10 @@ export function ProfileSettingsContent({
           <h2 className="text-lg font-semibold mb-4">Teams</h2>
           <Separator className="mb-6" />
 
+          {actionError && (
+            <p className="text-sm text-destructive mb-4">{actionError}</p>
+          )}
+
           {orgsList.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               You are not a member of any teams.
@@ -1013,6 +1039,15 @@ export function ProfileSettingsContent({
                   to transfer ownership.
                 </p>
               </div>
+            )}
+
+            {deleteError && (
+              <p className="text-sm text-destructive mt-2">{deleteError}</p>
+            )}
+            {deleteSuccess && (
+              <p className="text-sm text-green-600 dark:text-green-400 mt-2">
+                {deleteSuccess}
+              </p>
             )}
 
             <div className="flex justify-end mt-4">

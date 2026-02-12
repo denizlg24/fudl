@@ -5,6 +5,18 @@ const nextConfig: NextConfig = {
     useCache: true,
   },
   serverExternalPackages: ["pg", "@prisma/adapter-pg"],
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "*.s3.*.amazonaws.com",
+      },
+      {
+        protocol: "https",
+        hostname: "*.s3.amazonaws.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

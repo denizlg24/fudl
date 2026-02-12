@@ -10,7 +10,7 @@ const app = new Elysia()
     cors({
       origin: config.cors.origins,
       credentials: config.cors.credentials,
-    })
+    }),
   )
 
   .get("/", () => ({
@@ -24,7 +24,7 @@ const app = new Elysia()
   .listen(config.port);
 
 console.log(
-  `API running at http://localhost:${app.server?.port} [${config.env}]`
+  `API running at http://localhost:${app.server?.port} [${config.env}]`,
 );
 
 export type App = typeof app;
