@@ -6,6 +6,7 @@
 import { Elysia, t } from "elysia";
 import { prisma } from "@repo/db";
 import { authPlugin, ApiError } from "../../../middleware";
+import { getSignedDownloadUrl } from "../../../lib/s3";
 
 export const seasonRoutes = new Elysia({
   prefix: "/orgs/:organizationId/seasons",
@@ -70,7 +71,7 @@ export const seasonRoutes = new Elysia({
 
   /**
    * GET /orgs/:organizationId/seasons/:seasonId
-   * Get a single season with its games
+   * Get a single season with its games (including videos, tags, presigned URLs)
    */
   .get(
     "/:seasonId",
@@ -83,6 +84,26 @@ export const seasonRoutes = new Elysia({
         include: {
           games: {
             orderBy: { date: "desc" },
+            include: {
+              season: { select: { id: true, name: true } },
+              videos: {
+                select: {
+                  id: true,
+                  status: true,
+                  thumbnailKey: true,
+                  thumbnailUrl: true,
+                },
+                orderBy: { createdAt: "desc" },
+              },
+              _count: { select: { videos: true } },
+              tags: {
+                select: {
+                  tag: {
+                    select: { id: true, name: true, category: true },
+                  },
+                },
+              },
+            },
           },
           _count: { select: { games: true } },
         },
@@ -92,7 +113,43 @@ export const seasonRoutes = new Elysia({
         throw new ApiError(404, "Season not found");
       }
 
-      return { season };
+      // Batch-sign all thumbnail keys across all games' videos
+      const thumbnailKeys = new Set<string>();
+      for (const game of season.games) {
+        for (const video of game.videos) {
+          if (video.thumbnailKey) {
+            thumbnailKeys.add(video.thumbnailKey);
+          }
+        }
+      }
+
+      const signedUrlMap = new Map<string, string>();
+      if (thumbnailKeys.size > 0) {
+        const entries = Array.from(thumbnailKeys);
+        const signedUrls = await Promise.all(
+          entries.map((key) => getSignedDownloadUrl(key, 3600)),
+        );
+        for (let i = 0; i < entries.length; i++) {
+          signedUrlMap.set(entries[i], signedUrls[i]);
+        }
+      }
+
+      return {
+        season: {
+          ...season,
+          games: season.games.map((game) => ({
+            ...game,
+            tags: game.tags.map((entry) => entry.tag),
+            videos: game.videos.map((video) => ({
+              id: video.id,
+              status: video.status,
+              thumbnailUrl: video.thumbnailKey
+                ? (signedUrlMap.get(video.thumbnailKey) ?? null)
+                : (video.thumbnailUrl ?? null),
+            })),
+          })),
+        },
+      };
     },
     {
       isOrgMember: true,

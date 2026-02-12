@@ -156,6 +156,9 @@ The goal of FUDL is to provide coaches and players with:
 - **Game deletion cleans up S3 objects** — Game DELETE handler finds all associated videos, deletes their S3 objects via `deletePrefix()`, aborts in-progress multipart uploads, deletes upload sessions, then deletes all video records and the game in a Prisma batch transaction. No orphaned S3 objects or video records after game deletion.
 - **Thumbnail upload fix** — Replaced Elysia's `t.File()` body parsing with manual `request.formData()` for thumbnail upload endpoint. Fixed silent error swallowing in frontend thumbnail fetch (now checks `res.ok` and logs errors). Fixed `retryUpload()` to include `onComplete` and `onError` callbacks.
 - **Presigned URLs for all S3 objects** — S3 bucket is private; all access (thumbnails, video playback/download) uses presigned URLs. Upload stores only S3 keys (`storageKey`, `thumbnailKey`), never public URLs. Games and Videos API endpoints generate 1-hour presigned download URLs via `getSignedDownloadUrl()` when serving responses — both `thumbnailUrl` and `storageUrl` fields contain presigned URLs. Batch-signing avoids N+1 per-video overhead. No S3 bucket ACL or policy changes needed.
+- **Game detail page with video player** — `/games/[gameId]` server component page with full video playback. **Footage/angle architecture:** Each `Video` record is a full-length footage file (entire game recording from a specific camera angle). Multiple footage files = multiple views of the same content, switchable via angle toggle. `Clip` records (time segments within footage, created by future AI analysis) are separate from footage files. Custom `usePlayer` hook wrapping HTML5 `<video>` API (play/pause, seek, volume, playback rate, fullscreen, buffered progress). `VideoPlayer` component with layered architecture: `<video>` → `<canvas>` overlay (pointer-events: none, ready for future drawing/annotation) → click interaction layer → auto-hiding controls (3s timeout). `PlayerControls` with seek bar (buffer indicator), camera angle switcher (syncs playback time across angles via `pendingSeekRef`), playback speed (0.25x–2x), volume popover with vertical slider. Full keyboard shortcuts: Space/K (play/pause), J/L/arrows (skip ±5s), Shift+arrows (reserved for future clip nav), Up/Down (volume), M (mute), F (fullscreen). `GameSidebar` with three collapsible sections: game directory (all org games grouped by opponent/season/both/none), footage list (uploaded angles with active highlighting, click to switch), and clips (empty state — clips will appear when footage is analyzed). Desktop: sidebar always visible (w-80, right side). Mobile: sidebar renders vertically below the 16:9 video player (no Sheet overlay). Game switching via full page navigation. Camera angle indicator always visible in controls when angles exist.
+- **Games API enhancements** — `GET /orgs/:orgId/games/:gameId` now returns presigned `thumbnailUrl` and `storageUrl` for each video, plus per-video `tags` (for camera angle detection). `GET /orgs/:orgId/games` supports `?tagId=` query filter for filtering by any tag (enables sidebar opponent filtering).
+- **Season detail page** — `/seasons/[seasonId]` async server component page with full game list. Enhanced `GET /orgs/:orgId/seasons/:seasonId` API endpoint returns games with videos, tags, and batch-signed presigned thumbnail URLs (same shape as the games list endpoint). Back link to `/seasons`, season header with name/date range/calendar icon, edit/delete actions (coach-only, delete restricted when games exist), stats bar (game count, footage files, analyzed count), game list with thumbnails/opponent/date/video status, group-by-opponent selector, delete game support with S3 cleanup, auto-refresh after uploads complete, empty state for coaches vs players.
 
 ### Placeholder / Incomplete
 
@@ -163,8 +166,8 @@ The goal of FUDL is to provide coaches and players with:
 - `video_frame.py` has incomplete OpenCV frame extraction
 - No ML models for route detection implemented
 - No actual analytics dashboards or visualizations
-- No web pages for games or videos (game detail, video detail, etc.)
-- No season detail page (`/seasons/:seasonId` — clicking a season row navigates there but the page doesn't exist yet)
+- No video list/management page (videos are accessed through game detail page)
+- Season detail page exists but has no season-specific analytics or visualizations yet
 - Design specs written for home page, team settings, and profile settings (see `designs/` directory) — not yet implemented
 - `@repo/ui` has `chart.tsx` and `resizable.tsx` commented out (recharts v3 and react-resizable-panels v4 type incompatibilities)
 
@@ -432,7 +435,7 @@ These skills are installed but designed for different project architectures. Use
 
 ### Phase 3: Analytics & Visualization
 
-- [ ] Build game review interface with video playback + route overlays
+- [x] Build game review interface with video playback + route overlays
 - [ ] Create analytics dashboards (route tendencies, player stats, team comparisons)
 - [ ] Implement play-by-play breakdown views
 - [ ] Add charting/visualization components using recharts
@@ -1546,5 +1549,239 @@ This ensures continuity across sessions and prevents redundant work.
 - `apps/api/src/routes/v1/uploads/routes.ts` — Removed job scheduling, removed `getPublicUrl`/queue imports, schema-validated thumbnail upload, simplified `/complete` response
 - `apps/api/src/routes/v1/videos/routes.ts` — Batch-sign `storageKey` in list endpoint, sign `storageKey` in detail endpoint
 - `apps/web/app/lib/upload-store.tsx` — Removed `persistActiveIds()` and all localStorage interaction
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 27 — 2026-02-12
+
+**Focus:** Game detail page with full video playback system — custom player, sidebar, clip navigation
+
+**Completed:**
+
+1. **API: Enhanced `GET /orgs/:orgId/games/:gameId`** — `apps/api/src/routes/v1/games/routes.ts`:
+   - Now returns presigned `thumbnailUrl` and `storageUrl` for each video via batch `Promise.all` signing
+   - Includes per-video `tags` (needed for camera angle detection/display)
+   - Videos are fully detailed: id, title, status, mimeType, fileSize, durationSecs, thumbnailKey, storageKey, createdAt, tags
+
+2. **API: Added `?tagId=` filter to `GET /orgs/:orgId/games`** — `apps/api/src/routes/v1/games/routes.ts`:
+   - New optional `tagId` query parameter filters games via `tags: { some: { tagId } }` Prisma where clause
+   - Enables sidebar to filter games by opponent tag for scouting workflow
+
+3. **Custom `usePlayer` hook** — `apps/web/app/(authenticated)/games/components/use-player.ts`:
+   - Wraps HTML5 `<video>` API with React state management
+   - Tracks: `isPlaying`, `currentTime`, `duration`, `volume`, `isMuted`, `playbackRate`, `isFullscreen`, `bufferedPercent`, `isWaiting`
+   - Actions: `play`, `pause`, `togglePlay`, `seek`, `skip`, `setVolume`, `toggleMute`, `setPlaybackRate`, `toggleFullscreen`
+   - Full keyboard shortcuts: Space/K (play/pause), J/Left (skip -5s), L/Right (skip +5s), Up/Down (volume ±5%), M (mute), F (fullscreen)
+   - `resetState()` for when video source changes (camera angle switch)
+
+4. **`VideoPlayer` component** — `apps/web/app/(authenticated)/games/components/video-player.tsx`:
+   - Layered architecture: `<video>` → `<canvas>` overlay (pointer-events: none, ready for annotations) → click interaction layer → auto-hiding controls
+   - Canvas resizes via `ResizeObserver` to match video dimensions
+   - Controls auto-hide after 3s of mouse inactivity when playing, reappear on mouse move or pause
+   - Click-to-play/pause, double-click-to-fullscreen on the interaction layer
+   - Camera angle switching syncs playback time via `pendingSeekRef` — when switching angles, seeks to the same timestamp
+   - Computes camera angles from video tags (filters for `CAMERA_ANGLE` category)
+   - Shows `<Spinner>` during loading/waiting
+
+5. **`PlayerControls` component** — `apps/web/app/(authenticated)/games/components/player-controls.tsx`:
+   - Full control bar: prev/next clip, skip ±5s, play/pause, seek `<Slider>` with buffer indicator
+   - Camera angle switcher via `<DropdownMenu>` (visible only when multiple angles exist)
+   - Playback speed selector (0.25x, 0.5x, 1x, 1.25x, 1.5x, 2x) via `<DropdownMenu>`
+   - Volume `<Popover>` with vertical `<Slider>` + mute `<Toggle>`
+   - Fullscreen toggle
+   - Mobile sidebar trigger button (visible on `md:hidden`)
+   - All buttons have `<Tooltip>` with `<Kbd>` showing keyboard shortcuts
+   - Time display in monospace font (`current / duration`)
+
+6. **`ClipList` component** — `apps/web/app/(authenticated)/games/components/clip-list.tsx`:
+   - Scrollable list of video clips for the current game
+   - Each clip shows: thumbnail (S3 presigned URL via `<img>`), title or camera angle tag name, duration (mm:ss), clip index
+   - Active clip highlighted with accent background
+   - Click calls `onVideoChange(index)` to switch playback
+
+7. **`GameSidebar` component** — `apps/web/app/(authenticated)/games/components/game-sidebar.tsx`:
+   - Two collapsible sections via `<Collapsible>`: "Game Directory" and "Clips" (for current game)
+   - Game directory lists all org games with opponent name, date, video count
+   - Independent "Group by" `<Select>` control (none, season, opponent, both) — defaults to "by opponent"
+   - Reuses grouping logic pattern from dashboard (groupGames function adapted locally)
+   - Current game highlighted in the directory
+   - Each game is a `<Link>` for full page navigation (`/games/${gameId}`)
+   - Embeds `<ClipList>` for current game's videos
+
+8. **Server component page** — `apps/web/app/(authenticated)/games/[gameId]/page.tsx`:
+   - Async server component following canonical pattern
+   - Uses `requireAuth()`, `getServerOrg()`, `getActiveMember()` from `../../lib/auth`
+   - Parallel data fetching via `Promise.all`: game detail, all org games (for sidebar), seasons
+   - Shows `<NoTeamState>` when no org, `notFound()` when game doesn't exist
+   - Maps API data to `SidebarGameData[]` interface for sidebar consumption
+   - Passes everything to `<GamePlayback>` client component
+
+9. **Client layout component** — `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx`:
+   - Layout: flex row with player area (flex-1) + sidebar (w-80, hidden on mobile)
+   - Game info header: title (opponent name or game title), season badge, date, location, field tag
+   - Filters videos to only playable ones (`storageUrl` exists AND status is `UPLOADED` or `COMPLETED`)
+   - "No playable videos" empty state when no videos have been uploaded
+   - Mobile: sidebar renders vertically below the 16:9 video player (scrollable, no Sheet overlay)
+   - Full viewport height layout: `h-[calc(100vh-3.5rem)]` to fill below the nav bar
+
+**Key decisions:**
+
+- **Canvas overlay from day one** — Even though drawing/annotation tools aren't built yet, the `<canvas>` sits on top of the `<video>` with `pointer-events: none` from the start. This avoids a future refactor when coaching tools are implemented.
+- **Independent sidebar group-by** — The sidebar's grouping control is separate from the dashboard's. Coaches scouting opponents want "by opponent" grouping (the default), while the dashboard might use "by season."
+- **Full page navigation for game switching** — Rather than SPA-style video swapping, clicking a game in the sidebar navigates to `/games/${newGameId}`. This keeps the URL in sync, supports browser back/forward, and avoids stale data issues. The tradeoff is a page load, but server components make this fast.
+- **No `useEffect` for keyboard shortcuts** — Keyboard shortcuts are registered via a single `useEffect` in `usePlayer` that attaches a `keydown` listener to the document. All handlers use `useCallback` with stable deps to avoid re-registration.
+- **Slider `onValueChange` safety** — Radix Slider's callback provides `number[]` where elements can be `undefined`. All handlers use `values[0] ?? 0` fallback to prevent NaN propagation.
+
+**Key learnings:**
+
+- **Presigned URL batch-signing** — The game detail endpoint generates presigned URLs for all videos' `thumbnailKey` and `storageKey` in a single `Promise.all`. This avoids N+1 signing overhead when a game has many videos/angles.
+- **`durationSecs` is always null** — The Python worker is a stub, so video metadata (duration, dimensions, fps, codec) is never populated. The `ClipList` handles this gracefully by showing "--" for unknown durations.
+- **Camera angle detection** — Camera angles are determined by filtering a video's tags for `category === "CAMERA_ANGLE"`. If a video has no camera angle tag, the player still works — it just doesn't show the angle switcher UI.
+- **`ResizeObserver` for canvas** — The canvas overlay needs to match the video's rendered dimensions exactly. A `ResizeObserver` on the video container updates canvas width/height whenever the layout changes (window resize, fullscreen toggle, sidebar collapse).
+
+**Files created:**
+
+- `apps/web/app/(authenticated)/games/[gameId]/page.tsx` — Server component page
+- `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx` — Client layout component
+- `apps/web/app/(authenticated)/games/components/use-player.ts` — Custom video player hook
+- `apps/web/app/(authenticated)/games/components/video-player.tsx` — Video player with canvas overlay
+- `apps/web/app/(authenticated)/games/components/player-controls.tsx` — Full control bar
+- `apps/web/app/(authenticated)/games/components/clip-list.tsx` — Video clip list
+- `apps/web/app/(authenticated)/games/components/game-sidebar.tsx` — Game directory sidebar
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/games/routes.ts` — Enhanced game detail endpoint (presigned URLs, video tags), added `?tagId=` query filter
+- `AGENTS.md` — Updated Implemented section, Placeholder/Incomplete section, What Remains to Develop, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 28 — 2026-02-12
+
+**Focus:** Footage/angle/clip architecture redesign — correct the mental model of videos vs clips in the game player
+
+**Problem:** The game detail page treated each `Video` record as a "clip" in a playlist. `activeVideoIndex` navigated between video records like clips. The `ClipList` component displayed raw `Video` records. This was architecturally wrong:
+
+1. Each `Video` record is a **footage file** — a full-length recording of the entire game from a specific camera angle
+2. Multiple footage files = multiple views of the **same** content, not separate clips
+3. **Clips** (from the DB `Clip` model) are time segments within a footage file, created by future AI analysis
+4. The `ClipList` should show `Clip` records, not `Video` records
+
+**Completed:**
+
+1. **Redesigned `GamePlayback`** — `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx`:
+   - Replaced `activeVideoIndex` (integer) with `activeVideoId` (string) — tracks footage by ID, not position
+   - Renamed `playableVideos` to `footageFiles` — semantically clear
+   - Passes `footageFiles`/`activeVideoId`/`onAngleChange` to child components instead of `videos`/`activeVideoIndex`/`onVideoChange`
+   - Empty state text changed from "No playable videos" to "No playable footage"
+
+2. **Redesigned `VideoPlayer`** — `apps/web/app/(authenticated)/games/components/video-player.tsx`:
+   - Props changed: `footageFiles`/`activeVideoId`/`onAngleChange` replace `videos`/`activeVideoIndex`/`onVideoChange`
+   - Removed all clip navigation logic (prev/next clip, Shift+Arrow keyboard handlers)
+   - Active video found by ID (`footageFiles.find(v => v.id === activeVideoId)`)
+   - `AngleOption` now uses `videoId` (string) instead of `videoIndex` (integer), `tagId` is nullable
+   - Angle switching passes `videoId` to parent, not index — syncs playback time via existing `pendingSeekRef`
+   - All angles computed from footage files with `useMemo` — no per-render allocation
+   - Falls back to video title when no `CAMERA_ANGLE` tag exists on a footage file
+
+3. **Redesigned `PlayerControls`** — `apps/web/app/(authenticated)/games/components/player-controls.tsx`:
+   - Removed `SkipBack`/`SkipForward` prev/next clip buttons entirely
+   - Removed `hasPrevClip`/`hasNextClip`/`onPrevClip`/`onNextClip` props
+   - `AngleOption.tagId` is now `string | null` (nullable for footage without angle tags)
+   - `activeAngle` prop is an `AngleOption | null` object (replaces `activeAngleTagId: string | null`)
+   - Angle switcher uses `videoId` for radio group value (not `tagId`)
+   - Active angle display uses `activeAngle?.tagName` directly
+
+4. **Redesigned `ClipList`** — `apps/web/app/(authenticated)/games/components/clip-list.tsx`:
+   - No longer shows `Video` records — shows `Clip` records from the DB `Clip` model
+   - New `ClipData` interface: `id`, `title`, `startTime`, `endTime`, `videoId`, `thumbnailUrl`, `labels`
+   - Empty state with `Scissors` icon: "No clips yet — Clips will appear here once footage is analyzed and split into plays"
+   - Props: `clips: ClipData[]`, `activeClipId`, `onClipSelect` (future-ready)
+   - Non-empty render branch returns `null` for now (unreachable since no clips are created)
+
+5. **Redesigned `GameSidebar`** — `apps/web/app/(authenticated)/games/components/game-sidebar.tsx`:
+   - Props changed: `footageFiles`/`activeVideoId`/`onAngleChange` replace `videos`/`activeVideoIndex`/`onVideoChange`
+   - **Three collapsible sections** (was two):
+     1. **Games** — Game directory with grouping (unchanged)
+     2. **Footage** — NEW section showing uploaded footage files (camera angles) with thumbnails, active highlighting, click to switch angle. Badge shows footage count. Camera icon for no-thumbnail placeholder.
+     3. **Clips** — Shows `<ClipList>` with empty clips array (always empty for now). Badge shows "0". Collapsed by default.
+   - Footage section replaces the old "Clips" section that was incorrectly showing Video records
+   - Footage section uses `footageOpen` state (default: open), clips section uses `clipsOpen` state (default: closed)
+
+6. **Updated `usePlayer` hook** — `apps/web/app/(authenticated)/games/components/use-player.ts`:
+   - Updated Shift+Arrow keyboard shortcut comments from "previous/next clip (handled by parent)" to "reserved for future clip navigation"
+   - No logic changes — the hook was already correct
+
+**Key decisions:**
+
+- **`videoId` not `videoIndex` for angle switching** — Using IDs instead of array indices is more robust. Array order could change if the API returns videos in a different order across requests.
+- **`AngleOption.tagId` nullable** — A footage file might not have a `CAMERA_ANGLE` tag assigned. In this case, the video title is used as the angle display name. The switcher still works via `videoId`.
+- **Clips section collapsed by default** — Since no clips exist, the section would just show an empty state. Keeping it collapsed reduces visual noise while still being discoverable.
+- **Footage section separate from clips** — These are fundamentally different concepts. Footage files are full game recordings (the raw material). Clips are analyzed segments (the output). Mixing them in one section was the original mistake.
+- **No prev/next buttons in controls** — Without clips, there's nothing to navigate between. The buttons will return when clip navigation is implemented. Shift+Arrow keyboard shortcuts are reserved but no-op.
+
+**Files modified:**
+
+- `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx` — Footage-centric props, ID-based tracking
+- `apps/web/app/(authenticated)/games/components/video-player.tsx` — Footage-centric props, removed clip nav
+- `apps/web/app/(authenticated)/games/components/player-controls.tsx` — Removed clip nav buttons, nullable tagId
+- `apps/web/app/(authenticated)/games/components/clip-list.tsx` — Shows Clip records (empty state), not Video records
+- `apps/web/app/(authenticated)/games/components/game-sidebar.tsx` — Three sections: games, footage, clips
+- `apps/web/app/(authenticated)/games/components/use-player.ts` — Updated keyboard shortcut comments
+- `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 29 — 2026-02-12
+
+**Focus:** Season detail page — full game list, edit/delete season, game management, group-by-opponent
+
+**Completed:**
+
+1. **Enhanced `GET /orgs/:orgId/seasons/:seasonId` API** — `apps/api/src/routes/v1/seasons/routes.ts`:
+   - Now returns full game data with `videos: { id, status, thumbnailKey }`, flattened `tags`, season relation, `_count`
+   - Batch-signs all `thumbnailKey` values via `Promise.all` to generate presigned URLs
+   - Response shape matches `GET /orgs/:orgId/games` so frontend can reuse the same `GameCard` pattern
+   - Added `getSignedDownloadUrl` import from `../../../lib/s3`
+
+2. **Season detail server component** — `apps/web/app/(authenticated)/seasons/[seasonId]/page.tsx`:
+   - Async server component using `requireAuth()`, `getServerOrg()`, `getActiveMember()` from `../../../lib/auth`
+   - Parallel data fetching via `Promise.all`: season detail + active member
+   - Shows `<NoTeamState>` when no org, `notFound()` when season doesn't exist or API returns non-200
+   - Maps API data to serializable props for client component
+
+3. **Season detail client component** — `apps/web/app/(authenticated)/seasons/[seasonId]/season-detail-content.tsx`:
+   - **Season header** — Back link to `/seasons`, calendar icon, season name, date range, edit/delete actions (coach-only)
+   - **Edit season dialog** — `react-hook-form` + `standardSchemaResolver(updateSeasonSchema)`, pre-fills current values, resets on open
+   - **Delete season** — AlertDialog with restrict-guard (disabled button + warning when games exist), redirects to `/seasons` on success
+   - **Stats bar** — Game count, total footage files, analyzed footage count (videos with `COMPLETED` status)
+   - **Game list** — Reuses dashboard's `GameCard` pattern: thumbnail, opponent tag, date/location meta, video status line, play button, dropdown menu (view game, upload footage, delete game)
+   - **Group-by-opponent selector** — Two options: No grouping, By opponent. Section headers with group label + game count badge
+   - **Delete game** — AlertDialog confirmation, calls `DELETE /orgs/:orgId/games/:gameId`, optimistic removal from list
+   - **Auto-refresh after uploads** — Uses `useActiveUploadCount()` + `useRef` to detect when active uploads drop to 0, re-fetches season data
+   - **Empty state** — Different messaging for coaches ("Upload your first game footage") vs players ("No games have been added yet")
+
+**Key decisions:**
+
+- **Same GameCard pattern as dashboard** — Reused the exact same visual structure (thumbnail, opponent/meta/status lines) to maintain consistency. Omitted season from the meta line since the page is already scoped to one season.
+- **Group-by limited to "none" and "opponent"** — No "by season" option since the page is already season-scoped. No "both" option since it would be identical to "by opponent" in this context.
+- **Restrict-delete for seasons with games** — Same pattern as the seasons list page. Delete button is disabled with a warning message when the season has games. Users must move/delete games first.
+- **Batch presigned URL signing** — Collects all unique `thumbnailKey` values into a `Set`, signs them all via `Promise.all`, builds a `Map<key, signedUrl>`, maps results back. Same efficient pattern used in the games list endpoint.
+
+**Key learnings:**
+
+- **`UpdateSeasonValues` type already existed** — At `packages/types/src/validations.ts:227`, ready to use for the edit season form. No new types needed.
+- **Season list already navigated to `/seasons/${id}`** — `seasons-content.tsx` line 439 had the click handler wired up. The detail page just needed to exist at the right route.
+- **API response shape alignment matters** — By making the season detail endpoint return games in the same shape as the games list endpoint (with videos, tags, presigned URLs), the frontend could reuse the same `GameCard` rendering logic without any adapter layer.
+
+**Files created:**
+
+- `apps/web/app/(authenticated)/seasons/[seasonId]/page.tsx` — Server component page
+- `apps/web/app/(authenticated)/seasons/[seasonId]/season-detail-content.tsx` — Client component with full season detail UI
+
+**Files modified:**
+
+- `apps/api/src/routes/v1/seasons/routes.ts` — Enhanced `GET /:seasonId` with videos, tags, presigned URLs
+- `AGENTS.md` — Updated Implemented section, Placeholder/Incomplete section, added session log
 
 **Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
