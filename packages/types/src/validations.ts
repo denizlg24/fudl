@@ -289,6 +289,38 @@ export const analysisVideoSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Clip schemas
+// ---------------------------------------------------------------------------
+
+export const createClipSchema = z
+  .object({
+    videoId: z.string().min(1, "Video is required"),
+    playNumber: z.number().int().min(1, "Play number must be at least 1"),
+    startTime: z.number().min(0, "Start time must be non-negative"),
+    endTime: z.number().min(0, "End time must be non-negative"),
+    title: trimmedString(1, 200, "Clip title").optional(),
+    labels: z.array(z.string().max(100)).max(20).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine((data) => data.endTime > data.startTime, {
+    message: "End time must be after start time",
+    path: ["endTime"],
+  });
+
+export type CreateClipValues = z.infer<typeof createClipSchema>;
+
+export const updateClipSchema = z.object({
+  playNumber: z.number().int().min(1).optional(),
+  title: trimmedString(1, 200, "Clip title").optional().nullable(),
+  startTime: z.number().min(0).optional(),
+  endTime: z.number().min(0).optional(),
+  labels: z.array(z.string().max(100)).max(20).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type UpdateClipValues = z.infer<typeof updateClipSchema>;
+
+// ---------------------------------------------------------------------------
 // Setup / org creation
 // ---------------------------------------------------------------------------
 

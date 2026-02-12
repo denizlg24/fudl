@@ -159,6 +159,8 @@ The goal of FUDL is to provide coaches and players with:
 - **Game detail page with video player** — `/games/[gameId]` server component page with full video playback. **Footage/angle architecture:** Each `Video` record is a full-length footage file (entire game recording from a specific camera angle). Multiple footage files = multiple views of the same content, switchable via angle toggle. `Clip` records (time segments within footage, created by future AI analysis) are separate from footage files. Custom `usePlayer` hook wrapping HTML5 `<video>` API (play/pause, seek, volume, playback rate, fullscreen, buffered progress). `VideoPlayer` component with layered architecture: `<video>` → `<canvas>` overlay (pointer-events: none, ready for future drawing/annotation) → click interaction layer → auto-hiding controls (3s timeout). `PlayerControls` with seek bar (buffer indicator), camera angle switcher (syncs playback time across angles via `pendingSeekRef`), playback speed (0.25x–2x), volume popover with vertical slider. Full keyboard shortcuts: Space/K (play/pause), J/L/arrows (skip ±5s), Shift+arrows (reserved for future clip nav), Up/Down (volume), M (mute), F (fullscreen). `GameSidebar` with three collapsible sections: game directory (all org games grouped by opponent/season/both/none), footage list (uploaded angles with active highlighting, click to switch), and clips (empty state — clips will appear when footage is analyzed). Desktop: sidebar always visible (w-80, right side). Mobile: sidebar renders vertically below the 16:9 video player (no Sheet overlay). Game switching via full page navigation. Camera angle indicator always visible in controls when angles exist.
 - **Games API enhancements** — `GET /orgs/:orgId/games/:gameId` now returns presigned `thumbnailUrl` and `storageUrl` for each video, plus per-video `tags` (for camera angle detection). `GET /orgs/:orgId/games` supports `?tagId=` query filter for filtering by any tag (enables sidebar opponent filtering).
 - **Season detail page** — `/seasons/[seasonId]` async server component page with full game list. Enhanced `GET /orgs/:orgId/seasons/:seasonId` API endpoint returns games with videos, tags, and batch-signed presigned thumbnail URLs (same shape as the games list endpoint). Back link to `/seasons`, season header with name/date range/calendar icon, edit/delete actions (coach-only, delete restricted when games exist), stats bar (game count, footage files, analyzed count), game list with thumbnails/opponent/date/video status, group-by-opponent selector, delete game support with S3 cleanup, auto-refresh after uploads complete, empty state for coaches vs players.
+- **Manual clip cutting system (full stack)** — Coaches can create, edit, and delete time-segmented clips from game footage. `Clip` model CRUD via REST API (`GET/POST/PATCH/DELETE /orgs/:orgId/clips`). Validation schemas (`createClipSchema`, `updateClipSchema`) in `@repo/types/validations`. Coach-only write operations via `isCoach` middleware; all members can read/play clips. **Mark-in/mark-out UI** in video player: `ClipMarkControls` component with `[` / `]` buttons (keyboard: `I` for mark-in, `O` for mark-out), `Scissors` save button opens `ClipCreateDialog` with time fine-tune, labels. **Seek bar indicators**: green/red lines for mark positions, translucent range preview, existing clip ranges shown as muted bars (active clip highlighted). **Clip playback**: selecting a clip seeks to `startTime`, auto-pauses at `endTime`, `Escape` exits clip mode, seeking outside clip range exits clip mode. **Clip navigation**: `Shift+Left/Right` arrows navigate between plays. **ClipList** in sidebar: groups by `playNumber`, shows "Play N" with angle count badges, time ranges, duration, label badges (max 3 + overflow), coach-only dropdown with edit/delete actions. **ClipEditDialog** for updating clip details. **Delete confirmation** via `AlertDialog`. Optimistic UI updates for create/update/delete. `metadata.source = "manual"` set automatically for manual clips (AI worker will use `"ai"`). Clips fetched in parallel on game detail page server component.
+- **Play-scoped clip system (multi-angle)** — Clips are "plays" auto-numbered (Play 1, Play 2, ...) with no custom titles. `playNumber` field on Clip model with `@@unique([videoId, playNumber])` constraint (one clip per angle per play). **Play-scoped control bar**: when a play is active, seek bar shows only that play's duration (0 to clipDuration), time display shows clip-relative time, skip ±5s clamped to play boundaries, mark controls hidden. **Multi-angle plays**: same play number can have clips on different footage files with different time ranges. Selecting a play prefers the variant on the current angle, falls back to first available. Switching angles during play mode loads the clip variant for the new angle. **Smart play number selector**: `ClipCreateDialog` defaults to `clipsOnThisAngle.length + 1`, shows existing plays without a clip on the current angle as options. **Prev/next play navigation**: SkipBack/SkipForward buttons in clip mode, `Shift+Left/Right` keyboard shortcuts. **Play list**: groups clips by `playNumber`, shows one row per play with angle count indicator, deleting a play removes ALL angle variants. API enforces uniqueness (409 Conflict for duplicate `videoId + playNumber`).
 
 ### Placeholder / Incomplete
 
@@ -1783,5 +1785,222 @@ This ensures continuity across sessions and prevents redundant work.
 
 - `apps/api/src/routes/v1/seasons/routes.ts` — Enhanced `GET /:seasonId` with videos, tags, presigned URLs
 - `AGENTS.md` — Updated Implemented section, Placeholder/Incomplete section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 30 — 2026-02-12
+
+**Focus:** Manual clip cutting — full-stack CRUD for game clips with mark-in/mark-out UI
+
+**Completed:**
+
+1. **Clip validation schemas** — `packages/types/src/validations.ts`:
+   - Added `createClipSchema` with `.refine()` for `endTime > startTime` cross-field validation
+   - Added `updateClipSchema` with optional/nullable fields
+   - Exported `CreateClipValues` and `UpdateClipValues` types
+   - Fixed `z.record(z.unknown())` → `z.record(z.string(), z.unknown())` for Zod v4 compatibility
+
+2. **Clip API routes** — `apps/api/src/routes/v1/clips/routes.ts`:
+   - `GET /orgs/:orgId/clips?gameId=&videoId=` — List clips (required `gameId`, optional `videoId`), ordered by `startTime` asc, batch-signs `thumbnailKey`
+   - `POST /orgs/:orgId/clips` — Create clip with `isCoach` auth, validates video belongs to org, sets `metadata.source = "manual"`
+   - `GET /orgs/:orgId/clips/:clipId` — Get single clip with presigned URLs
+   - `PATCH /orgs/:orgId/clips/:clipId` — Update with cross-field `endTime > startTime` validation
+   - `DELETE /orgs/:orgId/clips/:clipId` — Delete (no S3 cleanup for manual clips)
+   - Wired into `apps/api/src/routes/v1/index.ts`
+
+3. **Server component clip fetch** — `apps/web/app/(authenticated)/games/[gameId]/page.tsx`:
+   - Added `fetchGameClips()` function
+   - Added to existing `Promise.all` for parallel fetching
+   - Passes `initialClips` and `orgId` to `<GamePlayback>`
+
+4. **GamePlayback clip state hub** — `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx`:
+   - Added `clips`, `activeClipId`, `markIn`, `markOut` state
+   - `currentTimeRef` updated via `onTimeUpdate` callback from `VideoPlayer`
+   - Optimistic mutation handlers: `handleClipCreated` (insert sorted), `handleClipUpdated` (replace + re-sort), `handleClipDeleted` (remove + clear active)
+   - Clip selection with footage switching: `handleClipSelect` changes `activeVideoId` if clip is on a different footage file
+   - Clip navigation: `navigateClip("prev"/"next")` walks through sorted clip array
+   - Keyboard shortcuts (separate `useEffect`, does NOT modify `usePlayer`): `I` (mark in), `O` (mark out), `Escape` (clear clip/marks), `Shift+Arrow` (navigate clips)
+   - `handleSeek` exits clip mode when seeking outside active clip range
+   - Threads all clip props to `VideoPlayer` and `GameSidebar` (both mobile and desktop)
+
+5. **ClipMarkControls** — `apps/web/app/(authenticated)/games/components/clip-mark-controls.tsx`:
+   - `[` / `]` buttons showing green/red timestamps when marks are set
+   - `Scissors` button opens `ClipCreateDialog` when both marks are valid
+   - `X` button clears marks
+   - Tooltips with keyboard shortcut hints
+
+6. **ClipCreateDialog** — `apps/web/app/(authenticated)/games/components/clip-create-dialog.tsx`:
+   - `react-hook-form` + `standardSchemaResolver(createClipSchema)`
+   - Time range display with duration badge
+   - Fine-tune start/end number inputs (±0.1s step)
+   - Optional title and comma-separated labels
+   - POSTs to `/orgs/${orgId}/clips`, calls `onClipCreated` on success
+
+7. **ClipEditDialog** — `apps/web/app/(authenticated)/games/components/clip-edit-dialog.tsx`:
+   - Same fields as create, pre-filled from existing clip
+   - PATCHes to `/orgs/${orgId}/clips/${clipId}`, calls `onClipUpdated`
+   - Form resets when clip prop changes
+
+8. **ClipList (full rendering)** — `apps/web/app/(authenticated)/games/components/clip-list.tsx`:
+   - Each row: index badge, title (or "Clip N"), time range, duration badge, label badges (max 3 + overflow)
+   - Active clip highlighted with accent bg + ring
+   - Coach-only dropdown menu with Edit and Delete actions
+   - Delete confirmation via `AlertDialog`
+   - Context-aware empty state: coaches see "Press I to mark in…", players see "Clips will appear…"
+
+9. **VideoPlayer clip playback** — `apps/web/app/(authenticated)/games/components/video-player.tsx`:
+   - `onTimeUpdate` callback reports `state.currentTime` to parent
+   - `activeClip` prop: seeks to `startTime` when clip changes (tracked via `prevClipIdRef`), auto-plays
+   - Auto-pause at `endTime` via `useEffect` watching `state.currentTime`
+   - `onSeek` callback wrapper for exiting clip mode
+   - Builds `clipMarkControlsNode` (coach-only) and passes as slot to `PlayerControls`
+
+10. **PlayerControls seek bar enhancements** — `apps/web/app/(authenticated)/games/components/player-controls.tsx`:
+    - Clip range indicators: muted bars for each clip's time range, active clip uses brighter primary color
+    - Mark range preview: translucent primary band between mark-in and mark-out
+    - Mark-in indicator: thin green vertical line
+    - Mark-out indicator: thin red vertical line
+    - `clipMarkControls` React node slot rendered between play controls and time display
+    - New props: `onSeek`, `markIn`, `markOut`, `clips`, `activeClipId`, `clipMarkControls`
+
+11. **GameSidebar clip integration** — `apps/web/app/(authenticated)/games/components/game-sidebar.tsx`:
+    - Accepts `clips`, `activeClipId`, `onClipSelect`, `onClipUpdated`, `onClipDeleted`, `orgId` props
+    - Passes all to `<ClipList>` with `isCoach` and `orgId`
+    - Clip badge count shows `clips.length` (not hardcoded `0`)
+    - `clipsOpen` defaults to `true` when clips exist
+
+**Key decisions:**
+
+- **Clip keyboard shortcuts in parent, not `usePlayer`** — `I`, `O`, `Escape`, `Shift+Arrow` are handled in a separate `useEffect` in `GamePlayback`. The `usePlayer` hook remains untouched (single responsibility — video element API only). The existing `usePlayer` handler already returns early on `Shift+Arrow`, so no conflict.
+- **`currentTimeRef` pattern** — `VideoPlayer` reports time via `onTimeUpdate` callback, parent stores it in a `useRef`. This avoids re-rendering the parent on every `timeupdate` event while still giving keyboard shortcut handlers access to the current time.
+- **`metadata.source = "manual"` on API** — Set server-side, not client-side. This ensures all manual clips are tagged consistently. The AI worker will set `metadata.source = "ai"` when it creates clips.
+- **No S3 operations for clips** — Manual clips are pure time markers (`startTime`/`endTime`). `storageKey`/`thumbnailKey` remain null. Future AI-generated clips may have their own extracted video segments.
+- **Auto-play on clip select** — When a clip is selected, the player seeks to `startTime` and auto-plays. This is the expected behavior for film review (click a play → watch it immediately).
+
+**Key learnings:**
+
+- **Zod v4 `z.record()` signature** — `z.record(valueSchema)` (1 arg) is not valid in Zod v4. Must use `z.record(keySchema, valueSchema)` (2 args): `z.record(z.string(), z.unknown())`.
+- **`prevClipIdRef` prevents re-seeking** — Without tracking the previous clip ID, every re-render that includes `activeClip` in the dependency array would re-trigger the seek. The ref ensures seeking only happens when the clip actually changes.
+
+**Files created:**
+
+- `apps/api/src/routes/v1/clips/routes.ts` — Clip CRUD endpoints
+- `apps/api/src/routes/v1/clips/index.ts` — Barrel export
+- `apps/web/app/(authenticated)/games/components/clip-mark-controls.tsx` — Mark-in/mark-out buttons
+- `apps/web/app/(authenticated)/games/components/clip-create-dialog.tsx` — Clip save dialog
+- `apps/web/app/(authenticated)/games/components/clip-edit-dialog.tsx` — Clip edit dialog
+
+**Files modified:**
+
+- `packages/types/src/validations.ts` — Added clip schemas, fixed `z.record()` for Zod v4
+- `apps/api/src/routes/v1/index.ts` — Wired `clipRoutes`
+- `apps/web/app/(authenticated)/games/[gameId]/page.tsx` — Fetch clips in parallel, pass `initialClips` + `orgId`
+- `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx` — Clip state hub, mutation handlers, keyboard shortcuts, prop threading
+- `apps/web/app/(authenticated)/games/components/video-player.tsx` — `activeClip` prop, seek-to-start, auto-pause, `onTimeUpdate`, clip mark controls slot
+- `apps/web/app/(authenticated)/games/components/player-controls.tsx` — Seek bar indicators, `clipMarkControls` slot, new props
+- `apps/web/app/(authenticated)/games/components/game-sidebar.tsx` — Clip props, badge count, default open state
+- `apps/web/app/(authenticated)/games/components/clip-list.tsx` — Full clip rendering, coach actions, edit/delete
+- `AGENTS.md` — Updated Implemented section, added session log
+
+**Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅
+
+### Session 31 — 2026-02-12
+
+**Focus:** Play-scoped clip redesign — multi-angle plays with `playNumber`, play-scoped controls, smart play number selector
+
+**Completed:**
+
+1. **Schema change** — `packages/db/prisma/schema.prisma`:
+   - Added `playNumber Int` field to Clip model
+   - Added `@@unique([videoId, playNumber])` constraint (one clip per angle per play)
+   - Removed redundant `@@index([videoId])` (covered by the unique constraint)
+   - Migration run by user
+
+2. **Validation schemas** — `packages/types/src/validations.ts`:
+   - Added `playNumber: z.number().int().min(1, "Play number must be at least 1")` to `createClipSchema`
+   - Added `playNumber: z.number().int().min(1).optional()` to `updateClipSchema`
+
+3. **Clip API routes rewrite** — `apps/api/src/routes/v1/clips/routes.ts`:
+   - GET: Orders by `playNumber: "asc"` instead of `startTime: "asc"`, includes `playNumber` in response
+   - POST: Accepts required `playNumber` (`t.Integer({ minimum: 1 })`), validates uniqueness via `findUnique` on `videoId_playNumber`, returns 409 Conflict for duplicates
+   - PATCH: Accepts optional `playNumber`, validates uniqueness if changed
+   - DELETE: Returns `{ deleted: true, playNumber: clip.playNumber }`
+   - All responses include `playNumber` field
+
+4. **ClipList redesign** — `apps/web/app/(authenticated)/games/components/clip-list.tsx`:
+   - Added `playNumber: number` to `ClipData` interface
+   - Groups clips by `playNumber` into `PlayGroup[]` via `useMemo` with `Map`
+   - Shows one row per play ("Play N"), not one per clip
+   - Angle count badge when multiple variants exist
+   - Prefers variant on `activeVideoId` for time/label display
+   - Props changed: `activeClipId` → `activePlayNumber`, `onClipSelect` → `onPlaySelect`
+   - Delete removes ALL variants for a play via `Promise.all`
+
+5. **ClipCreateDialog redesign** — `apps/web/app/(authenticated)/games/components/clip-create-dialog.tsx`:
+   - Removed title field entirely
+   - Added play number `<Select>` with smart default: `clipsOnThisAngle.length + 1`, bumps to `maxPlay + 1` if collision
+   - Options: "New play (Play N)" at top + existing plays without a clip on current angle
+   - Sends `playNumber` to API, no `title`
+
+6. **ClipEditDialog update** — `apps/web/app/(authenticated)/games/components/clip-edit-dialog.tsx`:
+   - Removed title field
+   - Dialog title shows "Edit Play {clip.playNumber}"
+
+7. **ClipMarkControls update** — `apps/web/app/(authenticated)/games/components/clip-mark-controls.tsx`:
+   - Added `existingClips: ClipData[]` prop passed through to `ClipCreateDialog`
+   - Renamed tooltip: "Save play"
+
+8. **PlayerControls play-scoped mode** — `apps/web/app/(authenticated)/games/components/player-controls.tsx`:
+   - New props: `activeClip`, `hasPrevPlay`, `hasNextPlay`, `onPrevPlay`, `onNextPlay`
+   - When `activeClip` is set (clip mode):
+     - Seek bar: min=0, max=clipDuration, value=clipCurrentTime, translates to absolute on seek
+     - Time display: clipCurrentTime / clipDuration
+     - Buffer bar: mapped to clip-relative range
+     - Skip ±5s: clamped to clip boundaries
+     - Hides: clip range indicators, mark indicators, mark range preview, clipMarkControls
+     - Shows: SkipBack/SkipForward prev/next play buttons with Shift+Arrow tooltips
+   - Non-clip mode: unchanged
+
+9. **VideoPlayer prop threading** — `apps/web/app/(authenticated)/games/components/video-player.tsx`:
+   - Added `hasPrevPlay`, `hasNextPlay`, `onPrevPlay`, `onNextPlay` props
+   - Passes `existingClips={clips ?? []}` to `ClipMarkControls`
+   - Threads all new props to `PlayerControls`
+
+10. **GameSidebar update** — `apps/web/app/(authenticated)/games/components/game-sidebar.tsx`:
+    - Renamed "Clips" section to "Plays"
+    - Badge shows unique play count: `new Set(clips.map(c => c.playNumber)).size`
+    - Props changed: `activeClipId` → `activePlayNumber`, `onClipSelect` → `onPlaySelect`
+
+11. **GamePlayback complete rewrite** — `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx`:
+    - `activePlayNumber` (number | null) replaces `activeClipId` (string | null)
+    - `activeClip` derived via `useMemo`: prefers clip on current angle, falls back to first variant
+    - `sortedPlayNumbers` for navigation
+    - `navigatePlay("prev"/"next")` with automatic angle switching when current angle lacks variant
+    - `handlePlaySelect(playNumber)` with angle switching
+    - `handleClipDeleted` clears `activePlayNumber` when last variant deleted
+    - `handleAngleChange` keeps `activePlayNumber` set; useEffect exits play mode only if NO variants exist anywhere
+    - Removed unused `API_URL` import
+
+**Key decisions:**
+
+- **`playNumber` groups clips across angles** — A "play" is identified by its number, not by a clip ID. Multiple clips with the same `playNumber` on different footage files are variants of the same play from different camera angles.
+- **Smart default play number** — `clipsOnThisAngle.length + 1` means sequential clipping on one angle always gets the next number. When switching to another angle to add the same play, existing plays without a variant on the current angle appear as options.
+- **Play-scoped seek bar** — In clip mode, the seek bar shows 0 to clipDuration (not 0 to videoDuration). All seek operations translate between clip-relative and absolute time. This matches the Hudl UX where playing a clip feels like watching a standalone video.
+- **Angle switching preserves play mode** — When `handleAngleChange` fires during play mode, `activePlayNumber` stays set. The `activeClip` derivation recomputes automatically to find the variant for the new angle. Only if NO variant exists for the active play (on any angle) does play mode exit.
+- **Delete removes all variants** — Deleting a play from the ClipList deletes ALL angle variants via parallel DELETE API calls. This is the expected behavior since a "play" is a logical unit, not a single clip.
+
+**Files modified:**
+
+- `packages/db/prisma/schema.prisma` — Added `playNumber`, `@@unique([videoId, playNumber])`
+- `packages/types/src/validations.ts` — Added `playNumber` to clip schemas
+- `apps/api/src/routes/v1/clips/routes.ts` — Full rewrite with `playNumber` support, 409 conflict, ordering
+- `apps/web/app/(authenticated)/games/components/clip-list.tsx` — Play grouping, "Play N" display, multi-variant support
+- `apps/web/app/(authenticated)/games/components/clip-create-dialog.tsx` — Removed title, smart play number selector
+- `apps/web/app/(authenticated)/games/components/clip-edit-dialog.tsx` — Removed title, "Edit Play N"
+- `apps/web/app/(authenticated)/games/components/clip-mark-controls.tsx` — Added `existingClips` prop
+- `apps/web/app/(authenticated)/games/components/player-controls.tsx` — Play-scoped seek/time/buffer, prev/next buttons
+- `apps/web/app/(authenticated)/games/components/video-player.tsx` — Threaded new props
+- `apps/web/app/(authenticated)/games/components/game-sidebar.tsx` — "Plays" section, play count badge
+- `apps/web/app/(authenticated)/games/[gameId]/game-playback.tsx` — `activePlayNumber`, angle-aware derivation, play navigation
 
 **Type-check status:** `apps/web` ✅ | `apps/api` ✅ | `apps/docs` ✅ | `@repo/ui` ✅

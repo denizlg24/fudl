@@ -27,6 +27,20 @@ async function fetchAllGames(orgId: string, cookie: string) {
   return data.games || [];
 }
 
+async function fetchGameClips(
+  orgId: string,
+  gameId: string,
+  cookie: string,
+) {
+  const res = await fetch(
+    `${API_URL}/orgs/${orgId}/clips?gameId=${gameId}`,
+    { headers: { cookie }, cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.clips || [];
+}
+
 export default async function GameDetailPage({
   params,
 }: {
@@ -47,9 +61,10 @@ export default async function GameDetailPage({
   const reqHeaders = await headers();
   const cookie = reqHeaders.get("cookie") || "";
 
-  const [game, allGames, activeMember] = await Promise.all([
+  const [game, allGames, clips, activeMember] = await Promise.all([
     fetchGameDetail(org.id, gameId, cookie),
     fetchAllGames(org.id, cookie),
+    fetchGameClips(org.id, gameId, cookie),
     getActiveMember(),
   ]);
 
@@ -71,5 +86,13 @@ export default async function GameDetailPage({
     videoCount: (g._count as Record<string, number>)?.videos ?? 0,
   }));
 
-  return <GamePlayback game={game} sidebarGames={sidebarGames} role={role} />;
+  return (
+    <GamePlayback
+      game={game}
+      sidebarGames={sidebarGames}
+      initialClips={clips}
+      role={role}
+      orgId={org.id}
+    />
+  );
 }
