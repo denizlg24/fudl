@@ -29,7 +29,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
 
   /**
    * GET /orgs/:organizationId/games
-   * List all games for an organization, optionally filtered by season
+   * List all games for an organization, optionally filtered by season or tag
    */
   .get(
     "/",
@@ -38,6 +38,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
         where: {
           organizationId: params.organizationId,
           ...(query.seasonId && { seasonId: query.seasonId }),
+          ...(query.tagId && { tags: { some: { tagId: query.tagId } } }),
         },
         orderBy: { date: "desc" },
         include: {
@@ -100,6 +101,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
       }),
       query: t.Object({
         seasonId: t.Optional(t.String()),
+        tagId: t.Optional(t.String()),
       }),
     },
   )
@@ -184,7 +186,7 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
 
   /**
    * GET /orgs/:organizationId/games/:gameId
-   * Get a single game with its videos
+   * Get a single game with its videos (including presigned playback URLs)
    */
   .get(
     "/:gameId",
@@ -205,7 +207,16 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
               mimeType: true,
               fileSize: true,
               durationSecs: true,
+              thumbnailKey: true,
+              storageKey: true,
               createdAt: true,
+              tags: {
+                select: {
+                  tag: {
+                    select: { id: true, name: true, category: true },
+                  },
+                },
+              },
             },
           },
           _count: { select: { videos: true } },
@@ -217,13 +228,43 @@ export const gameRoutes = new Elysia({ prefix: "/orgs/:organizationId/games" })
         throw new ApiError(404, "Game not found");
       }
 
+      // Batch-sign all S3 keys (thumbnails + video files) in a single Promise.all
+      const keysToSign = new Set<string>();
+      for (const video of game.videos) {
+        if (video.thumbnailKey) keysToSign.add(video.thumbnailKey);
+        if (video.storageKey) keysToSign.add(video.storageKey);
+      }
+
+      const signedUrlMap = new Map<string, string>();
+      if (keysToSign.size > 0) {
+        const entries = Array.from(keysToSign);
+        const signedUrls = await Promise.all(
+          entries.map((key) => getSignedDownloadUrl(key, 3600)),
+        );
+        for (let i = 0; i < entries.length; i++) {
+          signedUrlMap.set(entries[i], signedUrls[i]);
+        }
+      }
+
       return {
         game: {
           ...game,
           tags: game.tags.map((entry) => entry.tag),
           videos: game.videos.map((video) => ({
-            ...video,
+            id: video.id,
+            title: video.title,
+            status: video.status,
+            mimeType: video.mimeType,
             fileSize: video.fileSize?.toString() ?? null,
+            durationSecs: video.durationSecs,
+            createdAt: video.createdAt,
+            thumbnailUrl: video.thumbnailKey
+              ? (signedUrlMap.get(video.thumbnailKey) ?? null)
+              : null,
+            storageUrl: video.storageKey
+              ? (signedUrlMap.get(video.storageKey) ?? null)
+              : null,
+            tags: video.tags.map((entry) => entry.tag),
           })),
         },
       };
