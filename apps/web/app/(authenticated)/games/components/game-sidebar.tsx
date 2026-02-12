@@ -31,6 +31,7 @@ import {
   Upload,
 } from "lucide-react";
 import { ClipList } from "./clip-list";
+import type { ClipData } from "./clip-list";
 import type { VideoData } from "./video-player";
 import Image from "next/image";
 
@@ -129,6 +130,18 @@ interface GameSidebarProps {
   onAngleChange: (videoId: string) => void;
   /** User's role in the org (for coach-gating actions) */
   role: string;
+  /** Clips for the current game */
+  clips: ClipData[];
+  /** Currently active play number */
+  activePlayNumber: number | null;
+  /** Called when a play is selected */
+  onPlaySelect: (playNumber: number) => void;
+  /** Called when a clip is updated */
+  onClipUpdated: (clip: ClipData) => void;
+  /** Called when a clip is deleted */
+  onClipDeleted: (clipId: string) => void;
+  /** Organization ID */
+  orgId: string;
   className?: string;
 }
 
@@ -139,13 +152,19 @@ export function GameSidebar({
   activeVideoId,
   onAngleChange,
   role,
+  clips,
+  activePlayNumber,
+  onPlaySelect,
+  onClipUpdated,
+  onClipDeleted,
+  orgId,
   className,
 }: GameSidebarProps) {
   const isCoach = isCoachRole(role);
   const [groupBy, setGroupBy] = useState<GroupBy>("opponent");
   const [gamesOpen, setGamesOpen] = useState(true);
   const [footageOpen, setFootageOpen] = useState(true);
-  const [clipsOpen, setClipsOpen] = useState(false);
+  const [clipsOpen, setClipsOpen] = useState(clips.length > 0);
 
   const groups = useMemo(
     () => groupGames(allGames, groupBy),
@@ -264,6 +283,44 @@ export function GameSidebar({
 
       <Separator />
 
+      {/* Plays section — shows time-segmented plays (above footage) */}
+      <Collapsible
+        open={clipsOpen}
+        onOpenChange={setClipsOpen}
+        className="shrink-0"
+      >
+        <div className="flex items-center justify-between px-3 py-2">
+          <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium hover:text-foreground transition-colors">
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !clipsOpen && "-rotate-90",
+              )}
+            />
+            Plays
+            <Badge variant="secondary" className="text-[10px] py-0 px-1.5 h-4">
+              {new Set(clips.map((c) => c.playNumber)).size}
+            </Badge>
+          </CollapsibleTrigger>
+        </div>
+
+        <CollapsibleContent>
+          <ClipList
+            clips={clips}
+            activePlayNumber={activePlayNumber}
+            activeVideoId={activeVideoId}
+            onPlaySelect={onPlaySelect}
+            onClipUpdated={onClipUpdated}
+            onClipDeleted={onClipDeleted}
+            isCoach={isCoach}
+            orgId={orgId}
+            className="max-h-[30vh]"
+          />
+        </CollapsibleContent>
+      </Collapsible>
+
+      <Separator />
+
       {/* Footage section — shows uploaded footage files (camera angles) */}
       <Collapsible
         open={footageOpen}
@@ -370,39 +427,6 @@ export function GameSidebar({
               </div>
             </ScrollArea>
           )}
-        </CollapsibleContent>
-      </Collapsible>
-
-      <Separator />
-
-      {/* Clips section — shows time-segmented clips (future feature) */}
-      <Collapsible
-        open={clipsOpen}
-        onOpenChange={setClipsOpen}
-        className="shrink-0"
-      >
-        <div className="flex items-center justify-between px-3 py-2">
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium hover:text-foreground transition-colors">
-            <ChevronDown
-              className={cn(
-                "size-3.5 transition-transform",
-                !clipsOpen && "-rotate-90",
-              )}
-            />
-            Clips
-            <Badge variant="secondary" className="text-[10px] py-0 px-1.5 h-4">
-              0
-            </Badge>
-          </CollapsibleTrigger>
-        </div>
-
-        <CollapsibleContent>
-          <ClipList
-            clips={[]}
-            activeClipId={null}
-            onClipSelect={() => {}}
-            className="max-h-[30vh]"
-          />
         </CollapsibleContent>
       </Collapsible>
     </div>

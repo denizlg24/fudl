@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCoachRole } from "@repo/types";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
@@ -10,6 +10,7 @@ import { VideoPlayer } from "../components/video-player";
 import { GameSidebar } from "../components/game-sidebar";
 import type { VideoData } from "../components/video-player";
 import type { SidebarGameData } from "../components/game-sidebar";
+import type { ClipData } from "../components/clip-list";
 
 interface GameDetailData {
   id: string;
@@ -27,7 +28,9 @@ interface GameDetailData {
 interface GamePlaybackProps {
   game: GameDetailData;
   sidebarGames: SidebarGameData[];
+  initialClips: ClipData[];
   role: string;
+  orgId: string;
 }
 
 function formatGameDate(dateStr: string | null): string {
@@ -41,7 +44,13 @@ function formatGameDate(dateStr: string | null): string {
   });
 }
 
-export function GamePlayback({ game, sidebarGames, role }: GamePlaybackProps) {
+export function GamePlayback({
+  game,
+  sidebarGames,
+  initialClips,
+  role,
+  orgId,
+}: GamePlaybackProps) {
   const isCoach = isCoachRole(role);
 
   // Filter to playable footage files (full game recordings from different angles)
@@ -65,9 +74,269 @@ export function GamePlayback({ game, sidebarGames, role }: GamePlaybackProps) {
     [footageFiles, activeVideoId],
   );
 
-  const handleAngleChange = useCallback((videoId: string) => {
+  const handleAngleChange = useCallback(
+    (videoId: string) => {
+      setActiveVideoId(videoId);
+      // activePlayNumber stays set — activeClip derivation recomputes automatically
+      // If new angle has no variant for current play, exit play mode
+    },
+    [],
+  );
+
+  // Sidebar footage click — exits play mode so the user returns to full footage view
+  const handleFootageSelect = useCallback((videoId: string) => {
     setActiveVideoId(videoId);
+    setActivePlayNumber(null);
+    setMarkIn(null);
+    setMarkOut(null);
   }, []);
+
+  // ---- Clip state ----
+  const [clips, setClips] = useState<ClipData[]>(initialClips);
+  // Default to first play if clips exist, otherwise full footage mode
+  const [activePlayNumber, setActivePlayNumber] = useState<number | null>(
+    () => {
+      if (initialClips.length === 0) return null;
+      const playNumbers = Array.from(new Set(initialClips.map((c) => c.playNumber)));
+      playNumbers.sort((a, b) => a - b);
+      return playNumbers[0] ?? null;
+    },
+  );
+  const [markIn, setMarkIn] = useState<number | null>(null);
+  const [markOut, setMarkOut] = useState<number | null>(null);
+
+  // Round to 1 decimal place for clean values in number inputs
+  const handleMarkIn = useCallback((time: number) => {
+    setMarkIn(Math.round(time * 10) / 10);
+  }, []);
+  const handleMarkOut = useCallback((time: number) => {
+    setMarkOut(Math.round(time * 10) / 10);
+  }, []);
+
+  // Derive active clip from activePlayNumber + activeVideoId
+  const activeClip = useMemo(() => {
+    if (!activePlayNumber) return null;
+    // Prefer clip on current angle
+    const onCurrentAngle = clips.find(
+      (c) => c.playNumber === activePlayNumber && c.videoId === activeVideoId,
+    );
+    if (onCurrentAngle) return onCurrentAngle;
+    // Fall back to first available angle
+    return clips.find((c) => c.playNumber === activePlayNumber) ?? null;
+  }, [clips, activePlayNumber, activeVideoId]);
+
+  // Derive activeClipId for VideoPlayer's seek tracking
+  const activeClipId = activeClip?.id ?? null;
+
+  // Current time ref — updated by VideoPlayer via onTimeUpdate callback
+  const currentTimeRef = useRef<number>(0);
+  const handleTimeUpdate = useCallback((time: number) => {
+    currentTimeRef.current = time;
+  }, []);
+
+  // ---- Unique sorted play numbers for navigation ----
+  const sortedPlayNumbers = useMemo(() => {
+    const nums = Array.from(new Set(clips.map((c) => c.playNumber)));
+    nums.sort((a, b) => a - b);
+    return nums;
+  }, [clips]);
+
+  // ---- Prev/next play navigation ----
+  const hasPrevPlay = useMemo(() => {
+    if (!activePlayNumber) return false;
+    const idx = sortedPlayNumbers.indexOf(activePlayNumber);
+    return idx > 0;
+  }, [activePlayNumber, sortedPlayNumbers]);
+
+  const hasNextPlay = useMemo(() => {
+    if (!activePlayNumber) return false;
+    const idx = sortedPlayNumbers.indexOf(activePlayNumber);
+    return idx >= 0 && idx < sortedPlayNumbers.length - 1;
+  }, [activePlayNumber, sortedPlayNumbers]);
+
+  const navigatePlay = useCallback(
+    (direction: "prev" | "next") => {
+      if (sortedPlayNumbers.length === 0) return;
+
+      if (!activePlayNumber) {
+        // Select first or last
+        const target =
+          direction === "next"
+            ? sortedPlayNumbers[0]
+            : sortedPlayNumbers[sortedPlayNumbers.length - 1];
+        if (target !== undefined) setActivePlayNumber(target);
+        return;
+      }
+
+      const idx = sortedPlayNumbers.indexOf(activePlayNumber);
+      if (idx === -1) return;
+
+      const nextIdx = direction === "next" ? idx + 1 : idx - 1;
+      const target = sortedPlayNumbers[nextIdx];
+      if (target !== undefined) {
+        setActivePlayNumber(target);
+        // Check if we need to switch angle
+        const onCurrentAngle = clips.find(
+          (c) => c.playNumber === target && c.videoId === activeVideoId,
+        );
+        if (!onCurrentAngle) {
+          // Switch to first angle that has this play
+          const anyVariant = clips.find((c) => c.playNumber === target);
+          if (anyVariant) {
+            setActiveVideoId(anyVariant.videoId);
+          }
+        }
+      }
+    },
+    [sortedPlayNumbers, activePlayNumber, clips, activeVideoId],
+  );
+
+  // ---- Clip mutation handlers (optimistic) ----
+  const handleClipCreated = useCallback((clip: ClipData) => {
+    setClips((prev) => {
+      const next = [...prev, clip];
+      next.sort((a, b) => a.playNumber - b.playNumber || a.startTime - b.startTime);
+      return next;
+    });
+    // Clear marks after creation
+    setMarkIn(null);
+    setMarkOut(null);
+  }, []);
+
+  const handleClipUpdated = useCallback((updated: ClipData) => {
+    setClips((prev) => {
+      const next = prev.map((c) => (c.id === updated.id ? updated : c));
+      next.sort((a, b) => a.playNumber - b.playNumber || a.startTime - b.startTime);
+      return next;
+    });
+  }, []);
+
+  const handleClipDeleted = useCallback(
+    (clipId: string) => {
+      setClips((prev) => {
+        const next = prev.filter((c) => c.id !== clipId);
+        // If deleting the last variant of the active play, clear
+        if (activePlayNumber !== null) {
+          const remainingForPlay = next.filter(
+            (c) => c.playNumber === activePlayNumber,
+          );
+          if (remainingForPlay.length === 0) {
+            // Schedule clearing outside of setState
+            setTimeout(() => setActivePlayNumber(null), 0);
+          }
+        }
+        return next;
+      });
+    },
+    [activePlayNumber],
+  );
+
+  // ---- Play selection ----
+  const handlePlaySelect = useCallback(
+    (playNumber: number) => {
+      // Find variant for this play on current angle
+      const onCurrentAngle = clips.find(
+        (c) => c.playNumber === playNumber && c.videoId === activeVideoId,
+      );
+      if (onCurrentAngle) {
+        setActivePlayNumber(playNumber);
+        return;
+      }
+      // Switch to first angle that has this play
+      const anyVariant = clips.find((c) => c.playNumber === playNumber);
+      if (anyVariant) {
+        setActiveVideoId(anyVariant.videoId);
+        setActivePlayNumber(playNumber);
+      }
+    },
+    [clips, activeVideoId],
+  );
+
+  // ---- Keyboard shortcuts for clips ----
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      switch (e.key) {
+        case "i":
+        case "I":
+          if (!isCoach) return;
+          e.preventDefault();
+          handleMarkIn(currentTimeRef.current);
+          break;
+
+        case "o":
+        case "O":
+          if (!isCoach) return;
+          e.preventDefault();
+          handleMarkOut(currentTimeRef.current);
+          break;
+
+        case "Escape":
+          e.preventDefault();
+          if (activePlayNumber) {
+            setActivePlayNumber(null);
+          }
+          setMarkIn(null);
+          setMarkOut(null);
+          break;
+
+        case "ArrowLeft":
+          if (e.shiftKey) {
+            e.preventDefault();
+            navigatePlay("prev");
+          }
+          break;
+
+        case "ArrowRight":
+          if (e.shiftKey) {
+            e.preventDefault();
+            navigatePlay("next");
+          }
+          break;
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isCoach, activePlayNumber, navigatePlay, handleMarkIn, handleMarkOut]);
+
+  // ---- Seek bar click exits play mode if outside range ----
+  const handleSeek = useCallback(
+    (time: number) => {
+      if (
+        activeClip &&
+        (time < activeClip.startTime || time > activeClip.endTime)
+      ) {
+        setActivePlayNumber(null);
+      }
+    },
+    [activeClip],
+  );
+
+  // ---- When angle changes and no variant exists for current play, exit play mode ----
+  useEffect(() => {
+    if (!activePlayNumber) return;
+    const hasVariant = clips.some(
+      (c) => c.playNumber === activePlayNumber && c.videoId === activeVideoId,
+    );
+    const hasAnyVariant = clips.some(
+      (c) => c.playNumber === activePlayNumber,
+    );
+    if (!hasVariant && !hasAnyVariant) {
+      setActivePlayNumber(null);
+    }
+    // If variant exists on another angle but not current, activeClip derivation
+    // handles the fallback — we don't exit play mode
+  }, [activePlayNumber, activeVideoId, clips]);
 
   const opponentTag = game.tags.find((t) => t.category === "OPPONENT");
   const fieldTag = game.tags.find((t) => t.category === "FIELD");
@@ -125,6 +394,27 @@ export function GamePlayback({ game, sidebarGames, role }: GamePlaybackProps) {
                 footageFiles={footageFiles}
                 activeVideoId={activeVideo.id}
                 onAngleChange={handleAngleChange}
+                onTimeUpdate={handleTimeUpdate}
+                onSeek={handleSeek}
+                activeClip={activeClip}
+                markIn={markIn}
+                markOut={markOut}
+                clips={clips}
+                activeClipId={activeClipId}
+                isCoach={isCoach}
+                orgId={orgId}
+                activeVideoIdForClip={activeVideoId}
+                onMarkIn={handleMarkIn}
+                onMarkOut={handleMarkOut}
+                onClipCreated={handleClipCreated}
+                onClearMarks={() => {
+                  setMarkIn(null);
+                  setMarkOut(null);
+                }}
+                hasPrevPlay={hasPrevPlay}
+                hasNextPlay={hasNextPlay}
+                onPrevPlay={() => navigatePlay("prev")}
+                onNextPlay={() => navigatePlay("next")}
               />
             </div>
           ) : (
@@ -154,8 +444,14 @@ export function GamePlayback({ game, sidebarGames, role }: GamePlaybackProps) {
             currentGameId={game.id}
             footageFiles={footageFiles}
             activeVideoId={activeVideo?.id ?? null}
-            onAngleChange={handleAngleChange}
+            onAngleChange={handleFootageSelect}
             role={role}
+            clips={clips}
+            activePlayNumber={activePlayNumber}
+            onPlaySelect={handlePlaySelect}
+            onClipUpdated={handleClipUpdated}
+            onClipDeleted={handleClipDeleted}
+            orgId={orgId}
             className="border-l-0 border-t"
           />
         </div>
@@ -168,8 +464,14 @@ export function GamePlayback({ game, sidebarGames, role }: GamePlaybackProps) {
           currentGameId={game.id}
           footageFiles={footageFiles}
           activeVideoId={activeVideo?.id ?? null}
-          onAngleChange={handleAngleChange}
+          onAngleChange={handleFootageSelect}
           role={role}
+          clips={clips}
+          activePlayNumber={activePlayNumber}
+          onPlaySelect={handlePlaySelect}
+          onClipUpdated={handleClipUpdated}
+          onClipDeleted={handleClipDeleted}
+          orgId={orgId}
           className="h-full"
         />
       </div>
