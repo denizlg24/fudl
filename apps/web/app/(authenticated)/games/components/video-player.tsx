@@ -235,29 +235,33 @@ export function VideoPlayer({
   );
 
   // ---- Auto-hide controls ----
+  // Keep controls pinned while the user is marking a clip (markIn is set)
+  const isMarking = markIn != null;
+
   const scheduleHide = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (isMarking) return;
     hideTimerRef.current = setTimeout(() => {
       if (state.isPlaying) {
         setShowControls(false);
       }
     }, CONTROLS_HIDE_DELAY);
-  }, [state.isPlaying]);
+  }, [state.isPlaying, isMarking]);
 
   const revealControls = useCallback(() => {
     setShowControls(true);
     scheduleHide();
   }, [scheduleHide]);
 
-  // Show controls when paused, start hide timer when playing
+  // Show controls when paused or marking, start hide timer when playing
   useEffect(() => {
-    if (!state.isPlaying) {
+    if (!state.isPlaying || isMarking) {
       setShowControls(true);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     } else {
       scheduleHide();
     }
-  }, [state.isPlaying, scheduleHide]);
+  }, [state.isPlaying, isMarking, scheduleHide]);
 
   // Cleanup timer on unmount
   useEffect(() => {

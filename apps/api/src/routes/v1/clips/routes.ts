@@ -24,10 +24,6 @@ export const clipRoutes = new Elysia({ prefix: "/orgs/:organizationId/clips" })
     async ({ params, query }) => {
       const { organizationId } = params;
 
-      if (!query.gameId) {
-        throw new ApiError(400, "gameId query parameter is required");
-      }
-
       const where: {
         organizationId: string;
         video: { gameId: string };
@@ -76,7 +72,7 @@ export const clipRoutes = new Elysia({ prefix: "/orgs/:organizationId/clips" })
         organizationId: t.String(),
       }),
       query: t.Object({
-        gameId: t.Optional(t.String()),
+        gameId: t.String({ minLength: 1 }),
         videoId: t.Optional(t.String()),
       }),
     },

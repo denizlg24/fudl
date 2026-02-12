@@ -309,14 +309,26 @@ export const createClipSchema = z
 
 export type CreateClipValues = z.infer<typeof createClipSchema>;
 
-export const updateClipSchema = z.object({
-  playNumber: z.number().int().min(1).optional(),
-  title: trimmedString(1, 200, "Clip title").optional().nullable(),
-  startTime: z.number().min(0).optional(),
-  endTime: z.number().min(0).optional(),
-  labels: z.array(z.string().max(100)).max(20).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const updateClipSchema = z
+  .object({
+    playNumber: z.number().int().min(1).optional(),
+    title: trimmedString(1, 200, "Clip title").optional().nullable(),
+    startTime: z.number().min(0).optional(),
+    endTime: z.number().min(0).optional(),
+    labels: z.array(z.string().max(100)).max(20).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine(
+    (data) => {
+      // Only validate when both are provided — partial updates rely on server
+      // merging with existing values (the API also checks the effective range)
+      if (data.startTime !== undefined && data.endTime !== undefined) {
+        return data.endTime > data.startTime;
+      }
+      return true;
+    },
+    { message: "End time must be after start time", path: ["endTime"] },
+  );
 
 export type UpdateClipValues = z.infer<typeof updateClipSchema>;
 

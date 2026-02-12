@@ -163,13 +163,13 @@ export function PlayerControls({
         const absTime = activeClip!.startTime + value;
         setSeekPreview(absTime);
         if (!isSeekDragging) {
-          onSeek?.(absTime) ?? actions.seek(absTime);
+          if (onSeek) onSeek(absTime); else actions.seek(absTime);
           setSeekPreview(null);
         }
       } else {
         setSeekPreview(value);
         if (!isSeekDragging) {
-          onSeek?.(value) ?? actions.seek(value);
+          if (onSeek) onSeek(value); else actions.seek(value);
           setSeekPreview(null);
         }
       }
@@ -182,9 +182,9 @@ export function PlayerControls({
       const value = values[0] ?? 0;
       if (inClipMode) {
         const absTime = activeClip!.startTime + value;
-        onSeek?.(absTime) ?? actions.seek(absTime);
+        if (onSeek) onSeek(absTime); else actions.seek(absTime);
       } else {
-        onSeek?.(value) ?? actions.seek(value);
+        if (onSeek) onSeek(value); else actions.seek(value);
       }
       setSeekPreview(null);
       setIsSeekDragging(false);

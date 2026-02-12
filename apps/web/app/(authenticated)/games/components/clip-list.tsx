@@ -117,16 +117,26 @@ export function ClipList({
     try {
       // Delete all variants for this play
       const variants = clips.filter((c) => c.playNumber === playNumber);
-      await Promise.all(
+      const results = await Promise.allSettled(
         variants.map((clip) =>
           fetch(`${API_URL}/orgs/${orgId}/clips/${clip.id}`, {
             method: "DELETE",
             credentials: "include",
+          }).then((res) => {
+            if (!res.ok) throw new Error(`Failed to delete clip ${clip.id}`);
+            return clip.id;
           }),
         ),
       );
-      for (const clip of variants) {
-        onClipDeleted(clip.id);
+      // Only remove clips that were successfully deleted
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          onClipDeleted(result.value);
+        }
+      }
+      const failedCount = results.filter((r) => r.status === "rejected").length;
+      if (failedCount > 0) {
+        console.error(`Failed to delete ${failedCount}/${variants.length} clip variants`);
       }
     } finally {
       setDeleting(false);
