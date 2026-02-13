@@ -333,6 +333,22 @@ export const updateClipSchema = z
 export type UpdateClipValues = z.infer<typeof updateClipSchema>;
 
 // ---------------------------------------------------------------------------
+// Annotation schemas
+// ---------------------------------------------------------------------------
+
+export const createAnnotationSchema = z.object({
+  videoId: z.string().min(1, "Video is required"),
+  timestamp: z.number().min(0, "Timestamp must be non-negative"),
+  data: z.object({
+    elements: z
+      .array(z.record(z.string(), z.unknown()))
+      .min(1, "At least one element is required"),
+  }),
+});
+
+export type CreateAnnotationValues = z.infer<typeof createAnnotationSchema>;
+
+// ---------------------------------------------------------------------------
 // Setup / org creation
 // ---------------------------------------------------------------------------
 

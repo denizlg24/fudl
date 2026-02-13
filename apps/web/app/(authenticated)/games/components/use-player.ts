@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface PlayerState {
   isPlaying: boolean;
@@ -319,17 +319,20 @@ export function usePlayer(
     };
   }, [toggleFullscreen]);
 
-  const actions: PlayerActions = {
-    play,
-    pause,
-    togglePlay,
-    seek,
-    skip,
-    setVolume,
-    toggleMute,
-    setPlaybackRate,
-    toggleFullscreen,
-  };
+  const actions: PlayerActions = useMemo(
+    () => ({
+      play,
+      pause,
+      togglePlay,
+      seek,
+      skip,
+      setVolume,
+      toggleMute,
+      setPlaybackRate,
+      toggleFullscreen,
+    }),
+    [play, pause, togglePlay, seek, skip, setVolume, toggleMute, setPlaybackRate, toggleFullscreen],
+  );
 
   return { videoRef, state, actions, resetState };
 }

@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { GamePlayback } from "./game-playback";
 import { NoTeamState } from "../../components/no-team-state";
 import { clientEnv } from "@repo/env/web";
+import type { AnnotationData } from "@repo/types";
 
 const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
 
@@ -41,12 +42,32 @@ async function fetchGameClips(
   return data.clips || [];
 }
 
+async function fetchGameAnnotations(
+  orgId: string,
+  videoIds: string[],
+  cookie: string,
+): Promise<AnnotationData[]> {
+  // Fetch annotations for all videos in parallel
+  const results = await Promise.all(
+    videoIds.map(async (videoId) => {
+      const res = await fetch(
+        `${API_URL}/orgs/${orgId}/annotations?videoId=${videoId}`,
+        { headers: { cookie }, cache: "no-store" },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.annotations || []) as AnnotationData[];
+    }),
+  );
+  return results.flat();
+}
+
 export default async function GameDetailPage({
   params,
 }: {
   params: Promise<{ gameId: string }>;
 }) {
-  await requireAuth();
+  const session = await requireAuth();
   const org = await getServerOrg();
 
   if (!org) {
@@ -72,6 +93,15 @@ export default async function GameDetailPage({
     notFound();
   }
 
+  // Fetch annotations for all videos in this game (needs video IDs from game data)
+  const videoIds = (game.videos as Array<{ id: string }>).map(
+    (v) => v.id,
+  );
+  const annotationsData =
+    videoIds.length > 0
+      ? await fetchGameAnnotations(org.id, videoIds, cookie)
+      : [];
+
   const role = activeMember?.role ?? "member";
 
   // Map allGames to sidebar-friendly shape
@@ -91,8 +121,10 @@ export default async function GameDetailPage({
       game={game}
       sidebarGames={sidebarGames}
       initialClips={clips}
+      initialAnnotations={annotationsData}
       role={role}
       orgId={org.id}
+      userId={session.user.id}
     />
   );
 }

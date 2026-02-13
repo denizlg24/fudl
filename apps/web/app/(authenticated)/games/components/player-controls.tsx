@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import type { PlayerState, PlayerActions } from "./use-player";
 import type { ClipData } from "./clip-list";
+import type { AnnotationData } from "@repo/types";
 
 /** Format seconds to mm:ss or h:mm:ss */
 function formatTime(seconds: number): string {
@@ -94,6 +95,8 @@ interface PlayerControlsProps {
   onNextPlay: () => void;
   /** Slot for clip mark controls (rendered between play controls and time) */
   clipMarkControls?: ReactNode;
+  /** Annotations for the current video (displayed as keyframe markers on seek bar) */
+  annotations?: AnnotationData[];
 }
 
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2] as const;
@@ -115,6 +118,7 @@ export function PlayerControls({
   onPrevPlay,
   onNextPlay,
   clipMarkControls,
+  annotations,
 }: PlayerControlsProps) {
   const [isSeekDragging, setIsSeekDragging] = useState(false);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
@@ -284,8 +288,40 @@ export function PlayerControls({
                 }}
               />
             )}
+
+            {/* Annotation keyframe diamond markers */}
+            {annotations?.map((ann) => {
+              const left = (ann.timestamp / duration) * 100;
+              return (
+                <div
+                  key={ann.id}
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 size-2 rotate-45 bg-amber-400 rounded-[1px] pointer-events-none z-10"
+                  style={{ left: `calc(${left}% + 0.5rem)` }}
+                />
+              );
+            })}
           </>
         )}
+
+        {/* Annotation keyframe markers in clip mode */}
+        {inClipMode &&
+          annotations
+            ?.filter(
+              (ann) =>
+                ann.timestamp >= activeClip!.startTime &&
+                ann.timestamp <= activeClip!.endTime,
+            )
+            .map((ann) => {
+              const clipRelative = ann.timestamp - activeClip!.startTime;
+              const left = (clipRelative / clipDuration) * 100;
+              return (
+                <div
+                  key={ann.id}
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 size-2 rotate-45 bg-amber-400 rounded-[1px] pointer-events-none z-10"
+                  style={{ left: `calc(${left}% + 0.5rem)` }}
+                />
+              );
+            })}
 
         <Slider
           value={[seekValue]}

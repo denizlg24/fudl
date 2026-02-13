@@ -14,6 +14,7 @@ import { inviteLinkRoutes } from "./invite-links";
 import { uploadRoutes } from "./uploads";
 import { tagRoutes } from "./tags";
 import { clipRoutes } from "./clips";
+import { annotationRoutes } from "./annotations";
 
 export const v1Routes = new Elysia({ prefix: "/v1" })
   .use(healthRoutes)
@@ -25,4 +26,5 @@ export const v1Routes = new Elysia({ prefix: "/v1" })
   .use(inviteLinkRoutes)
   .use(uploadRoutes)
   .use(tagRoutes)
-  .use(clipRoutes);
+  .use(clipRoutes)
+  .use(annotationRoutes);

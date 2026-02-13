@@ -2,15 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCoachRole } from "@repo/types";
+import type { AnnotationData, AnnotationElement } from "@repo/types";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Calendar, MapPin, Upload } from "lucide-react";
 import Link from "next/link";
+import { clientEnv } from "@repo/env/web";
 import { VideoPlayer } from "../components/video-player";
 import { GameSidebar } from "../components/game-sidebar";
+import { AnnotationToolbar } from "../components/annotation-toolbar";
+import { useAnnotationCanvas } from "../components/use-annotation-canvas";
 import type { VideoData } from "../components/video-player";
 import type { SidebarGameData } from "../components/game-sidebar";
 import type { ClipData } from "../components/clip-list";
+
+const API_URL = clientEnv.NEXT_PUBLIC_API_URL;
 
 interface GameDetailData {
   id: string;
@@ -29,8 +35,10 @@ interface GamePlaybackProps {
   game: GameDetailData;
   sidebarGames: SidebarGameData[];
   initialClips: ClipData[];
+  initialAnnotations: AnnotationData[];
   role: string;
   orgId: string;
+  userId: string;
 }
 
 function formatGameDate(dateStr: string | null): string {
@@ -48,10 +56,18 @@ export function GamePlayback({
   game,
   sidebarGames,
   initialClips,
+  initialAnnotations,
   role,
   orgId,
+  userId,
 }: GamePlaybackProps) {
   const isCoach = isCoachRole(role);
+
+  // Canvas ref shared between VideoPlayer and useAnnotationCanvas
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+  // Imperative seek ref — populated by VideoPlayer so we can trigger seeks programmatically
+  const seekRef = useRef<((time: number) => void) | null>(null);
 
   // Filter to playable footage files (full game recordings from different angles)
   const footageFiles = useMemo(
@@ -130,9 +146,6 @@ export function GamePlayback({
 
   // Current time ref — updated by VideoPlayer via onTimeUpdate callback
   const currentTimeRef = useRef<number>(0);
-  const handleTimeUpdate = useCallback((time: number) => {
-    currentTimeRef.current = time;
-  }, []);
 
   // ---- Unique sorted play numbers for navigation ----
   const sortedPlayNumbers = useMemo(() => {
@@ -252,7 +265,31 @@ export function GamePlayback({
     [clips, activeVideoId],
   );
 
-  // ---- Keyboard shortcuts for clips ----
+  // ---- Annotation state ----
+  const [annotations, setAnnotations] = useState<AnnotationData[]>(initialAnnotations);
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [activeAnnotation, setActiveAnnotation] = useState<AnnotationData | null>(null);
+  const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
+  const shownAnnotationIds = useRef<Set<string>>(new Set());
+  const annotationModeRef = useRef(false);
+  const activeAnnotationRef = useRef<AnnotationData | null>(null);
+  annotationModeRef.current = annotationMode;
+  activeAnnotationRef.current = activeAnnotation;
+
+  // Annotation canvas drawing hook
+  const annotationCanvas = useAnnotationCanvas({
+    canvasRef,
+    containerRef: playerContainerRef,
+    enabled: annotationMode,
+  });
+
+  // Filter annotations for the current video
+  const videoAnnotations = useMemo(
+    () => annotations.filter((a) => a.videoId === activeVideoId),
+    [annotations, activeVideoId],
+  );
+
+  // ---- Keyboard shortcuts for clips + annotations ----
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
@@ -266,8 +303,16 @@ export function GamePlayback({
       }
 
       switch (e.key) {
+        case "a":
+        case "A":
+          if (annotationMode) return; // Already in annotation mode
+          e.preventDefault();
+          setAnnotationMode(true);
+          break;
+
         case "i":
         case "I":
+          if (annotationMode) return;
           if (!isCoach) return;
           e.preventDefault();
           handleMarkIn(currentTimeRef.current);
@@ -275,6 +320,7 @@ export function GamePlayback({
 
         case "o":
         case "O":
+          if (annotationMode) return;
           if (!isCoach) return;
           e.preventDefault();
           handleMarkOut(currentTimeRef.current);
@@ -282,11 +328,31 @@ export function GamePlayback({
 
         case "Escape":
           e.preventDefault();
-          if (activePlayNumber) {
+          if (annotationMode) {
+            setAnnotationMode(false);
+          } else if (activeAnnotation) {
+            setActiveAnnotation(null);
+          } else if (activePlayNumber) {
             setActivePlayNumber(null);
           }
           setMarkIn(null);
           setMarkOut(null);
+          break;
+
+        case "z":
+        case "Z":
+          if (annotationMode && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            annotationCanvas.undo();
+          }
+          break;
+
+        case "Delete":
+        case "Backspace":
+          if (annotationMode && annotationCanvas.selectedIndex !== null) {
+            e.preventDefault();
+            annotationCanvas.deleteSelected();
+          }
           break;
 
         case "ArrowLeft":
@@ -307,20 +373,7 @@ export function GamePlayback({
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [isCoach, activePlayNumber, navigatePlay, handleMarkIn, handleMarkOut]);
-
-  // ---- Seek bar click exits play mode if outside range ----
-  const handleSeek = useCallback(
-    (time: number) => {
-      if (
-        activeClip &&
-        (time < activeClip.startTime || time > activeClip.endTime)
-      ) {
-        setActivePlayNumber(null);
-      }
-    },
-    [activeClip],
-  );
+  }, [isCoach, activePlayNumber, navigatePlay, handleMarkIn, handleMarkOut, annotationMode, activeAnnotation, annotationCanvas]);
 
   // ---- When angle changes and no variant exists for current play, exit play mode ----
   useEffect(() => {
@@ -337,6 +390,183 @@ export function GamePlayback({
     // If variant exists on another angle but not current, activeClip derivation
     // handles the fallback — we don't exit play mode
   }, [activePlayNumber, activeVideoId, clips]);
+
+  // ---- Clear shown annotation IDs on clip/angle changes so they can re-trigger ----
+  useEffect(() => {
+    shownAnnotationIds.current.clear();
+    setActiveAnnotation(null);
+  }, [activeClipId, activeVideoId]);
+
+  // ---- Auto-pause at annotation keyframes ----
+  // Use a ref for videoAnnotations so the callback doesn't get recreated on every annotation change
+  const videoAnnotationsRef = useRef(videoAnnotations);
+  videoAnnotationsRef.current = videoAnnotations;
+
+  const handleTimeUpdate = useCallback(
+    (time: number) => {
+      currentTimeRef.current = time;
+      // Read from refs to avoid recreating this callback on every state change
+      if (annotationModeRef.current || activeAnnotationRef.current) return;
+
+      for (const ann of videoAnnotationsRef.current) {
+        if (
+          Math.abs(time - ann.timestamp) < 0.3 &&
+          !shownAnnotationIds.current.has(ann.id)
+        ) {
+          shownAnnotationIds.current.add(ann.id);
+          setActiveAnnotation(ann);
+          break;
+        }
+      }
+    },
+    [], // Stable — reads from refs only
+  );
+
+  // Dismiss annotation overlay and resume playback
+  const handleDismissAnnotation = useCallback(() => {
+    setActiveAnnotation(null);
+  }, []);
+
+  // Reset shown annotations on seek so they can trigger again
+  const handleSeekWithAnnotationReset = useCallback(
+    (time: number) => {
+      shownAnnotationIds.current.clear();
+      if (
+        activeClip &&
+        (time < activeClip.startTime || time > activeClip.endTime)
+      ) {
+        setActivePlayNumber(null);
+      }
+    },
+    [activeClip],
+  );
+
+  // Save annotation
+  const handleSaveAnnotation = useCallback(async () => {
+    if (annotationCanvas.isEmpty) return;
+    setIsSavingAnnotation(true);
+    try {
+      const res = await fetch(`${API_URL}/orgs/${orgId}/annotations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          videoId: activeVideoId,
+          timestamp: Math.round(currentTimeRef.current * 10) / 10,
+          data: { elements: annotationCanvas.elements },
+        }),
+      });
+      if (res.ok) {
+        const { annotation } = await res.json();
+        setAnnotations((prev) =>
+          [...prev, annotation].sort((a, b) => a.timestamp - b.timestamp),
+        );
+      }
+    } finally {
+      setIsSavingAnnotation(false);
+      setAnnotationMode(false);
+    }
+  }, [orgId, activeVideoId, annotationCanvas.elements, annotationCanvas.isEmpty]);
+
+  // Cancel annotation mode
+  const handleCancelAnnotation = useCallback(() => {
+    setAnnotationMode(false);
+  }, []);
+
+  // Delete annotation
+  const handleDeleteAnnotation = useCallback(
+    async (annotationId: string) => {
+      const res = await fetch(
+        `${API_URL}/orgs/${orgId}/annotations/${annotationId}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (res.ok) {
+        setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
+      }
+    },
+    [orgId],
+  );
+
+  // Seek to annotation timestamp (from sidebar)
+  const handleAnnotationSeek = useCallback(
+    (timestamp: number) => {
+      // Exit play mode so the full video seek bar is shown
+      setActivePlayNumber(null);
+      // Clear shown annotations so they can re-trigger at the new position
+      shownAnnotationIds.current.clear();
+      setActiveAnnotation(null);
+      // Actually seek the video via the imperative ref
+      currentTimeRef.current = timestamp;
+      seekRef.current?.(timestamp);
+    },
+    [],
+  );
+
+  // Build annotation toolbar
+  const annotationToolbarNode = annotationMode ? (
+    <AnnotationToolbar
+      tool={annotationCanvas.tool}
+      onToolChange={annotationCanvas.setTool}
+      color={annotationCanvas.color}
+      onColorChange={annotationCanvas.setColor}
+      lineWidth={annotationCanvas.lineWidth}
+      onLineWidthChange={annotationCanvas.setLineWidth}
+      onUndo={annotationCanvas.undo}
+      onClear={annotationCanvas.clear}
+      onSave={handleSaveAnnotation}
+      onCancel={handleCancelAnnotation}
+      isEmpty={annotationCanvas.isEmpty}
+      isSaving={isSavingAnnotation}
+      hasSelection={annotationCanvas.selectedIndex !== null}
+      onDeleteSelected={annotationCanvas.deleteSelected}
+    />
+  ) : null;
+
+  // Build text input overlay for annotation text tool — sized to match the speech bubble box
+  const annotationTextInputNode = annotationCanvas.textInput ? (
+    <div
+      className="absolute z-50 pointer-events-auto"
+      style={{
+        left: `${annotationCanvas.textInput.x * 100}%`,
+        top: `${annotationCanvas.textInput.y * 100}%`,
+        width: `${annotationCanvas.textInput.w * 100}%`,
+        height: `${annotationCanvas.textInput.h * 100}%`,
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <textarea
+        ref={(el) => {
+          // Force focus via ref callback — autoFocus is unreliable for dynamically inserted inputs
+          if (el) {
+            requestAnimationFrame(() => el.focus());
+          }
+        }}
+        className="w-full h-full bg-black/60 text-orange-500 text-xs font-semibold px-1.5 py-1 rounded outline-none resize-none border-2 border-orange-500"
+        style={{ fontFamily: "Inter, system-ui, sans-serif" }}
+        placeholder="Type text..."
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.shiftKey) {
+            e.preventDefault();
+            annotationCanvas.commitText(
+              (e.target as HTMLTextAreaElement).value,
+            );
+          } else if (e.key === "Escape") {
+            annotationCanvas.cancelText();
+          }
+          e.stopPropagation();
+        }}
+        onBlur={(e) => {
+          if (e.target.value.trim()) {
+            annotationCanvas.commitText(e.target.value);
+          } else {
+            annotationCanvas.cancelText();
+          }
+        }}
+      />
+    </div>
+  ) : null;
 
   const opponentTag = game.tags.find((t) => t.category === "OPPONENT");
   const fieldTag = game.tags.find((t) => t.category === "FIELD");
@@ -395,7 +625,7 @@ export function GamePlayback({
                 activeVideoId={activeVideo.id}
                 onAngleChange={handleAngleChange}
                 onTimeUpdate={handleTimeUpdate}
-                onSeek={handleSeek}
+                onSeek={handleSeekWithAnnotationReset}
                 activeClip={activeClip}
                 markIn={markIn}
                 markOut={markOut}
@@ -415,6 +645,14 @@ export function GamePlayback({
                 hasNextPlay={hasNextPlay}
                 onPrevPlay={() => navigatePlay("prev")}
                 onNextPlay={() => navigatePlay("next")}
+                canvasRef={canvasRef}
+                annotationMode={annotationMode}
+                annotations={videoAnnotations}
+                activeAnnotation={activeAnnotation}
+                onDismissAnnotation={handleDismissAnnotation}
+                annotationToolbar={annotationToolbarNode}
+                annotationTextInput={annotationTextInputNode}
+                seekRef={seekRef}
               />
             </div>
           ) : (
@@ -452,6 +690,10 @@ export function GamePlayback({
             onClipUpdated={handleClipUpdated}
             onClipDeleted={handleClipDeleted}
             orgId={orgId}
+            annotations={videoAnnotations}
+            onDeleteAnnotation={handleDeleteAnnotation}
+            onAnnotationSeek={handleAnnotationSeek}
+            userId={userId}
             className="border-l-0 border-t"
           />
         </div>
@@ -472,6 +714,10 @@ export function GamePlayback({
           onClipUpdated={handleClipUpdated}
           onClipDeleted={handleClipDeleted}
           orgId={orgId}
+          annotations={videoAnnotations}
+          onDeleteAnnotation={handleDeleteAnnotation}
+          onAnnotationSeek={handleAnnotationSeek}
+          userId={userId}
           className="h-full"
         />
       </div>
