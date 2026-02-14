@@ -26,7 +26,7 @@
     "auth:generate": "bun x @better-auth/cli@latest generate --config \"packages/auth/src/server.ts\" --output \"packages/db/prisma/schema.prisma\""
   },
   "devDependencies": {
-    "dotenv-cli": "^7.4.4",
+    "dotenv-cli": "^11.0.0",
     "prettier": "^3.7.4",
     "turbo": "^2.7.3",
     "typescript": "5.9.3"
