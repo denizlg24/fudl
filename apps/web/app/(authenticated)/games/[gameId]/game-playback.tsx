@@ -461,10 +461,10 @@ export function GamePlayback({
         setAnnotations((prev) =>
           [...prev, annotation].sort((a, b) => a.timestamp - b.timestamp),
         );
+        setAnnotationMode(false);
       }
     } finally {
       setIsSavingAnnotation(false);
-      setAnnotationMode(false);
     }
   }, [orgId, activeVideoId, annotationCanvas.elements, annotationCanvas.isEmpty]);
 

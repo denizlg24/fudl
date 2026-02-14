@@ -70,7 +70,7 @@ export const annotationRoutes = new Elysia({
    */
   .post(
     "/",
-    async ({ params, body, user, request }) => {
+    async ({ params, body, user }) => {
       const { organizationId } = params;
       const userId = user!.id;
 
@@ -84,16 +84,10 @@ export const annotationRoutes = new Elysia({
       }
 
       // Determine privacy from user's role in the org
-      const { auth } = await import("@repo/auth/server");
-      const membership = await auth.api.getFullOrganization({
-        headers: request.headers,
-        query: { organizationId },
+      const membership = await prisma.member.findFirst({
+        where: { organizationId, userId },
       });
-
-      const userMembership = membership?.members.find(
-        (m) => m.userId === userId,
-      );
-      const role = userMembership?.role ?? "member";
+      const role = membership?.role ?? "member";
       const isPrivate = role === "member"; // players get private annotations
 
       const annotation = await prisma.annotation.create({
@@ -145,7 +139,7 @@ export const annotationRoutes = new Elysia({
    */
   .delete(
     "/:annotationId",
-    async ({ params, user, request }) => {
+    async ({ params, user }) => {
       const { organizationId, annotationId } = params;
       const userId = user!.id;
 
@@ -158,16 +152,10 @@ export const annotationRoutes = new Elysia({
       }
 
       // Determine user's role
-      const { auth } = await import("@repo/auth/server");
-      const membership = await auth.api.getFullOrganization({
-        headers: request.headers,
-        query: { organizationId },
+      const membership = await prisma.member.findFirst({
+        where: { organizationId, userId },
       });
-
-      const userMembership = membership?.members.find(
-        (m) => m.userId === userId,
-      );
-      const role = userMembership?.role ?? "member";
+      const role = membership?.role ?? "member";
       const isCoach = role === "owner" || role === "admin";
 
       if (annotation.isPrivate) {

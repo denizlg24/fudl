@@ -140,9 +140,17 @@ export function VideoPlayer({
 
   // ---- Expose imperative seek to parent ----
   useEffect(() => {
-    if (seekRef) {
-      seekRef.current = actions.seek;
+    if (!seekRef) {
+      return;
     }
+
+    seekRef.current = actions.seek;
+
+    return () => {
+      if (seekRef) {
+        seekRef.current = null;
+      }
+    };
   }, [seekRef, actions.seek]);
 
   // ---- Report time updates to parent via direct event listener ----
