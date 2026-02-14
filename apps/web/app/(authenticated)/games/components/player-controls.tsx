@@ -313,7 +313,7 @@ export function PlayerControls({
             )
             .map((ann) => {
               const clipRelative = ann.timestamp - activeClip!.startTime;
-              const left = (clipRelative / clipDuration) * 100;
+              const left = clipDuration > 0 ? (clipRelative / clipDuration) * 100 : 0;
               return (
                 <div
                   key={ann.id}

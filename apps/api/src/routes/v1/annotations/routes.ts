@@ -6,6 +6,7 @@
 
 import { Elysia, t } from "elysia";
 import { prisma } from "@repo/db";
+import type { AnnotationElement } from "@repo/types";
 import { authPlugin, ApiError } from "../../../middleware";
 
 export const annotationRoutes = new Elysia({
@@ -44,7 +45,7 @@ export const annotationRoutes = new Elysia({
           id: ann.id,
           videoId: ann.videoId,
           timestamp: ann.timestamp,
-          data: ann.data as { elements: unknown[] },
+          data: ann.data as { elements: AnnotationElement[] },
           isPrivate: ann.isPrivate,
           createdById: ann.createdById,
           createdByName: ann.createdBy.name,
@@ -109,7 +110,7 @@ export const annotationRoutes = new Elysia({
           id: annotation.id,
           videoId: annotation.videoId,
           timestamp: annotation.timestamp,
-          data: annotation.data as { elements: unknown[] },
+          data: annotation.data as { elements: AnnotationElement[] },
           isPrivate: annotation.isPrivate,
           createdById: annotation.createdById,
           createdByName: annotation.createdBy.name,

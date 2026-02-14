@@ -15,7 +15,6 @@ import {
 
 interface UseAnnotationCanvasOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  containerRef: React.RefObject<HTMLDivElement | null>;
   enabled: boolean;
 }
 
@@ -98,7 +97,6 @@ function moveElement(
 
 export function useAnnotationCanvas({
   canvasRef,
-  containerRef,
   enabled,
 }: UseAnnotationCanvasOptions): UseAnnotationCanvasReturn {
   const [tool, setTool] = useState<AnnotationTool>("pen");
@@ -472,14 +470,26 @@ export function useAnnotationCanvas({
       }
     }
 
+    function onPointerCancel(e: PointerEvent) {
+      onPointerUp(e);
+    }
+
+    function onLostPointerCapture(e: PointerEvent) {
+      onPointerUp(e);
+    }
+
     canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointercancel", onPointerCancel);
+    canvas.addEventListener("lostpointercapture", onLostPointerCapture);
 
     return () => {
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerCancel);
+      canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
     };
   }, [enabled, canvasRef, getNormalized, redraw]);
 

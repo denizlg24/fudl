@@ -336,12 +336,70 @@ export type UpdateClipValues = z.infer<typeof updateClipSchema>;
 // Annotation schemas
 // ---------------------------------------------------------------------------
 
+const strokeElementSchema = z.object({
+  type: z.literal("stroke"),
+  points: z.array(z.tuple([z.number(), z.number()])).min(1),
+  color: z.string(),
+  width: z.number(),
+});
+
+const arrowElementSchema = z.object({
+  type: z.literal("arrow"),
+  startX: z.number(),
+  startY: z.number(),
+  endX: z.number(),
+  endY: z.number(),
+  color: z.string(),
+  width: z.number(),
+});
+
+const circleElementSchema = z.object({
+  type: z.literal("circle"),
+  cx: z.number(),
+  cy: z.number(),
+  rx: z.number(),
+  ry: z.number(),
+  color: z.string(),
+  width: z.number(),
+});
+
+const rectangleElementSchema = z.object({
+  type: z.literal("rectangle"),
+  x: z.number(),
+  y: z.number(),
+  w: z.number(),
+  h: z.number(),
+  color: z.string(),
+  width: z.number(),
+});
+
+const textElementSchema = z.object({
+  type: z.literal("text"),
+  x: z.number(),
+  y: z.number(),
+  w: z.number(),
+  h: z.number(),
+  tailX: z.number(),
+  tailY: z.number(),
+  text: z.string(),
+  color: z.string(),
+  fontSize: z.number(),
+});
+
+const annotationElementSchema = z.discriminatedUnion("type", [
+  strokeElementSchema,
+  arrowElementSchema,
+  circleElementSchema,
+  rectangleElementSchema,
+  textElementSchema,
+]);
+
 export const createAnnotationSchema = z.object({
   videoId: z.string().min(1, "Video is required"),
   timestamp: z.number().min(0, "Timestamp must be non-negative"),
   data: z.object({
     elements: z
-      .array(z.record(z.string(), z.unknown()))
+      .array(annotationElementSchema)
       .min(1, "At least one element is required"),
   }),
 });

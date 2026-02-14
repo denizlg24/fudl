@@ -279,7 +279,6 @@ export function GamePlayback({
   // Annotation canvas drawing hook
   const annotationCanvas = useAnnotationCanvas({
     canvasRef,
-    containerRef: playerContainerRef,
     enabled: annotationMode,
   });
 
