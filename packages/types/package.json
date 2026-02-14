@@ -30,6 +30,11 @@
       "types": "./src/validations.ts",
       "import": "./src/validations.ts",
       "default": "./src/validations.ts"
+    },
+    "./annotations": {
+      "types": "./src/annotations.ts",
+      "import": "./src/annotations.ts",
+      "default": "./src/annotations.ts"
     }
   },
   "devDependencies": {

@@ -12,6 +12,7 @@
     "db:generate": "dotenv -- turbo run db:generate",
     "db:migrate": "dotenv -- turbo run db:migrate",
     "db:deploy": "dotenv -- turbo run db:deploy",
+    "db:push": "dotenv -- turbo run db:push",
     "docker:up": "docker compose up -d redis",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",

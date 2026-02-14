@@ -7,8 +7,10 @@ import { Separator } from "@repo/ui/components/separator";
 import { PlayerControls } from "./player-controls";
 import { ClipMarkControls } from "./clip-mark-controls";
 import { usePlayer } from "./use-player";
+import { renderAnnotation, clearCanvas } from "./annotation-renderer";
 import type { AngleOption } from "./player-controls";
 import type { ClipData } from "./clip-list";
+import type { AnnotationData, AnnotationElement } from "@repo/types";
 
 export interface VideoData {
   id: string;
@@ -68,6 +70,20 @@ interface VideoPlayerProps {
   onNextPlay?: () => void;
   /** Ref for the canvas overlay (for future drawing) */
   canvasRef?: React.RefObject<HTMLCanvasElement | null>;
+  /** Whether annotation drawing mode is active */
+  annotationMode?: boolean;
+  /** Annotations for the current video (for keyframe indicators on seek bar) */
+  annotations?: AnnotationData[];
+  /** Currently displayed saved annotation (paused at keyframe) */
+  activeAnnotation?: AnnotationData | null;
+  /** Called when the active annotation should be cleared (e.g. user resumes playback) */
+  onDismissAnnotation?: () => void;
+  /** Slot for the annotation toolbar (rendered above controls when in annotation mode) */
+  annotationToolbar?: React.ReactNode;
+  /** Slot for text input overlay during annotation (positioned over canvas) */
+  annotationTextInput?: React.ReactNode;
+  /** Imperative ref — VideoPlayer writes its seek function here so the parent can trigger programmatic seeks */
+  seekRef?: React.MutableRefObject<((time: number) => void) | null>;
 }
 
 const CONTROLS_HIDE_DELAY = 3000;
@@ -95,6 +111,13 @@ export function VideoPlayer({
   onPrevPlay,
   onNextPlay,
   canvasRef: externalCanvasRef,
+  annotationMode = false,
+  annotations,
+  activeAnnotation,
+  onDismissAnnotation,
+  annotationToolbar,
+  annotationTextInput,
+  seekRef,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const internalCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -115,12 +138,37 @@ export function VideoPlayer({
   const src = activeVideo?.storageUrl ?? "";
   const poster = activeVideo?.thumbnailUrl ?? undefined;
 
-  // ---- Report time updates to parent ----
+  // ---- Expose imperative seek to parent ----
   useEffect(() => {
-    if (onTimeUpdate) {
-      onTimeUpdate(state.currentTime);
+    if (!seekRef) {
+      return;
     }
-  }, [state.currentTime, onTimeUpdate]);
+
+    seekRef.current = actions.seek;
+
+    return () => {
+      if (seekRef) {
+        seekRef.current = null;
+      }
+    };
+  }, [seekRef, actions.seek]);
+
+  // ---- Report time updates to parent via direct event listener ----
+  // Using a ref + native listener avoids cascading re-renders from useEffect on state.currentTime
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  onTimeUpdateRef.current = onTimeUpdate;
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    function handleTime() {
+      onTimeUpdateRef.current?.(el!.currentTime);
+    }
+
+    el.addEventListener("timeupdate", handleTime);
+    return () => el.removeEventListener("timeupdate", handleTime);
+  }, [videoRef, src]); // re-attach when video source changes
 
   // ---- Compute camera angles from footage files ----
   const angles: AngleOption[] = useMemo(() => {
@@ -234,34 +282,87 @@ export function VideoPlayer({
     [actions, onSeek],
   );
 
+  // ---- Pause when annotation mode activates ----
+  useEffect(() => {
+    if (annotationMode && state.isPlaying) {
+      actions.pause();
+    }
+  }, [annotationMode, state.isPlaying, actions]);
+
+  // ---- Pause and render when activeAnnotation is set (playback hit keyframe) ----
+  const prevAnnotationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const newId = activeAnnotation?.id ?? null;
+    // Only act when the annotation actually changes
+    if (newId === prevAnnotationIdRef.current) return;
+    prevAnnotationIdRef.current = newId;
+
+    if (activeAnnotation) {
+      actions.pause();
+      // Render the saved annotation on the canvas
+      const canvas = resolvedCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          clearCanvas(ctx, canvas.width, canvas.height);
+          renderAnnotation(
+            ctx,
+            activeAnnotation.data.elements as AnnotationElement[],
+            canvas.width,
+            canvas.height,
+          );
+        }
+      }
+    } else {
+      // Clear canvas when annotation is dismissed (unless annotation mode is active)
+      if (!annotationMode) {
+        const canvas = resolvedCanvasRef.current;
+        if (canvas) {
+          const ctx = canvas.getContext("2d");
+          if (ctx) clearCanvas(ctx, canvas.width, canvas.height);
+        }
+      }
+    }
+  }, [activeAnnotation, annotationMode, actions, resolvedCanvasRef]);
+
+  // ---- Clear active annotation when user resumes playback ----
+  const prevIsPlayingRef = useRef(false);
+  useEffect(() => {
+    // Detect transition from paused → playing while an annotation is shown
+    if (state.isPlaying && !prevIsPlayingRef.current && activeAnnotation) {
+      onDismissAnnotation?.();
+    }
+    prevIsPlayingRef.current = state.isPlaying;
+  }, [state.isPlaying, activeAnnotation, onDismissAnnotation]);
+
   // ---- Auto-hide controls ----
   // Keep controls pinned while the user is marking a clip (markIn is set)
   const isMarking = markIn != null;
 
   const scheduleHide = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (isMarking) return;
+    if (isMarking || annotationMode || activeAnnotation) return;
     hideTimerRef.current = setTimeout(() => {
       if (state.isPlaying) {
         setShowControls(false);
       }
     }, CONTROLS_HIDE_DELAY);
-  }, [state.isPlaying, isMarking]);
+  }, [state.isPlaying, isMarking, annotationMode, activeAnnotation]);
 
   const revealControls = useCallback(() => {
     setShowControls(true);
     scheduleHide();
   }, [scheduleHide]);
 
-  // Show controls when paused or marking, start hide timer when playing
+  // Show controls when paused, marking, annotating, or showing annotation
   useEffect(() => {
-    if (!state.isPlaying || isMarking) {
+    if (!state.isPlaying || isMarking || annotationMode || activeAnnotation) {
       setShowControls(true);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     } else {
       scheduleHide();
     }
-  }, [state.isPlaying, isMarking, scheduleHide]);
+  }, [state.isPlaying, isMarking, annotationMode, activeAnnotation, scheduleHide]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -357,15 +458,28 @@ export function VideoPlayer({
         preload="metadata"
       />
 
-      {/* Canvas overlay for future drawing annotations */}
+      {/* Canvas overlay for annotations/drawing */}
       <canvas
         ref={resolvedCanvasRef}
-        className="absolute inset-0 z-10 pointer-events-none"
+        className={cn(
+          "absolute inset-0",
+          annotationMode
+            ? annotationTextInput
+              ? "z-30 pointer-events-none"
+              : "z-30 pointer-events-auto cursor-crosshair"
+            : "z-10 pointer-events-none",
+        )}
       />
+
+      {/* Annotation text input overlay (positioned above canvas in annotation mode) */}
+      {annotationMode && annotationTextInput}
 
       {/* Interaction layer (click to play/pause, double-click fullscreen) */}
       <div
-        className="absolute inset-0 z-20"
+        className={cn(
+          "absolute inset-0 z-20",
+          annotationMode && "pointer-events-none",
+        )}
         onClick={handleContainerClick}
         role="button"
         tabIndex={-1}
@@ -376,6 +490,17 @@ export function VideoPlayer({
       {state.isWaiting && (
         <div className="absolute inset-0 z-25 flex items-center justify-center pointer-events-none">
           <Spinner className="size-10 text-white" />
+        </div>
+      )}
+
+      {/* Annotation toolbar — above controls when in annotation mode */}
+      {annotationMode && annotationToolbar && (
+        <div
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-40"
+          onClick={(e) => e.stopPropagation()}
+          onMouseMove={(e) => e.stopPropagation()}
+        >
+          {annotationToolbar}
         </div>
       )}
 
@@ -407,6 +532,7 @@ export function VideoPlayer({
           onPrevPlay={onPrevPlay ?? (() => {})}
           onNextPlay={onNextPlay ?? (() => {})}
           clipMarkControls={clipMarkControlsNode}
+          annotations={annotations}
         />
       </div>
     </div>

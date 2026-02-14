@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { isCoachRole } from "@repo/types";
 import { cn } from "@repo/ui/lib/utils";
@@ -31,8 +31,10 @@ import {
   Upload,
 } from "lucide-react";
 import { ClipList } from "./clip-list";
+import { AnnotationList } from "./annotation-list";
 import type { ClipData } from "./clip-list";
 import type { VideoData } from "./video-player";
+import type { AnnotationData } from "@repo/types";
 import Image from "next/image";
 
 export interface SidebarGameData {
@@ -142,6 +144,14 @@ interface GameSidebarProps {
   onClipDeleted: (clipId: string) => void;
   /** Organization ID */
   orgId: string;
+  /** Annotations for the current video */
+  annotations?: AnnotationData[];
+  /** Called when an annotation is deleted */
+  onDeleteAnnotation?: (annotationId: string) => void;
+  /** Called when an annotation is clicked (seek to timestamp) */
+  onAnnotationSeek?: (timestamp: number) => void;
+  /** Current user ID (for delete permission checks) */
+  userId?: string;
   className?: string;
 }
 
@@ -158,6 +168,10 @@ export function GameSidebar({
   onClipUpdated,
   onClipDeleted,
   orgId,
+  annotations,
+  onDeleteAnnotation,
+  onAnnotationSeek,
+  userId,
   className,
 }: GameSidebarProps) {
   const isCoach = isCoachRole(role);
@@ -165,6 +179,19 @@ export function GameSidebar({
   const [gamesOpen, setGamesOpen] = useState(true);
   const [footageOpen, setFootageOpen] = useState(true);
   const [clipsOpen, setClipsOpen] = useState(clips.length > 0);
+  const [annotationsOpen, setAnnotationsOpen] = useState(
+    (annotations?.length ?? 0) > 0,
+  );
+
+  // Auto-open annotations section when annotations are added
+  const prevAnnotationCount = useRef(annotations?.length ?? 0);
+  useEffect(() => {
+    const count = annotations?.length ?? 0;
+    if (count > 0 && prevAnnotationCount.current === 0) {
+      setAnnotationsOpen(true);
+    }
+    prevAnnotationCount.current = count;
+  }, [annotations?.length]);
 
   const groups = useMemo(
     () => groupGames(allGames, groupBy),
@@ -320,6 +347,48 @@ export function GameSidebar({
       </Collapsible>
 
       <Separator />
+
+      {/* Annotations section */}
+      {annotations && onDeleteAnnotation && onAnnotationSeek && userId && (
+        <>
+          <Collapsible
+            open={annotationsOpen}
+            onOpenChange={setAnnotationsOpen}
+            className="shrink-0"
+          >
+            <div className="flex items-center justify-between px-3 py-2">
+              <CollapsibleTrigger className="flex items-center gap-1.5 text-sm font-medium hover:text-foreground transition-colors">
+                <ChevronDown
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    !annotationsOpen && "-rotate-90",
+                  )}
+                />
+                Annotations
+                <Badge
+                  variant="secondary"
+                  className="text-[10px] py-0 px-1.5 h-4"
+                >
+                  {annotations.length}
+                </Badge>
+              </CollapsibleTrigger>
+            </div>
+
+            <CollapsibleContent>
+              <AnnotationList
+                annotations={annotations}
+                onDelete={onDeleteAnnotation}
+                onSeek={onAnnotationSeek}
+                role={role}
+                userId={userId}
+                className="max-h-[30vh]"
+              />
+            </CollapsibleContent>
+          </Collapsible>
+
+          <Separator />
+        </>
+      )}
 
       {/* Footage section — shows uploaded footage files (camera angles) */}
       <Collapsible
